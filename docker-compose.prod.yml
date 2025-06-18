@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  ssti-challenge:
+    image: 4c69/ssti_labs_e:ssti_v1
+    container_name: ssti-challenge
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s 

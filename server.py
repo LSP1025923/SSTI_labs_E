@@ -5,7 +5,7 @@ Eecho's SSTI CTF Challenge Server
 Python Server-Side Template Injection Challenge with WAF
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from jinja2 import Template, Environment, BaseLoader
 import re
@@ -13,7 +13,7 @@ import os
 import random
 import string
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='public', static_url_path='')
 CORS(app)
 
 # WAF规则 - 禁止的关键词
@@ -272,12 +272,13 @@ def render_template(template_str):
 
 @app.route('/')
 def index():
-    """主页"""
-    return jsonify({
-        'message': 'Eecho\'s SSTI CTF Challenge',
-        'version': '1.0.0',
-        'status': 'running'
-    })
+    """主页 - 提供React应用"""
+    return send_from_directory('public', 'index.html')
+
+@app.route('/<path:path>')
+def serve_static(path):
+    """提供静态文件"""
+    return send_from_directory('public', path)
 
 @app.route('/render', methods=['POST'])
 def render():

@@ -36,7 +36,7 @@ function App() {
     setOutput('');
 
     try {
-      const response = await axios.post('http://localhost:5000/render', {
+      const response = await axios.post('/render', {
         template: input
       });
       
