@@ -239,7 +239,7 @@ This project is licensed under the MIT [LICENSE](LICENSE)
 **Eecho**
 
 - 博客: [www.eecho.top](https://www.eecho.top)
-- GitHub: [@4c69](https://github.com/4c69)
+- GitHub: [@Eecho](https://github.com/LSP1025923)
 
 ## ⚠️ 免责声明
 
