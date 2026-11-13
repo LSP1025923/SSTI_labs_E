@@ -1,18 +1,155 @@
-version: '3.8'
+# =============================================================================
+# SSTI_labs_E —— 生产/比赛部署编排（只用预构建镜像，不在目标机上构建）
+#
+# 与 docker-compose.yml 的区别：
+#   * 全部服务使用 `image:`，**没有 build:** —— 部署机上不需要源码编译能力，
+#     也不需要 node/maven 工具链，镜像由 CI 或本地 `scripts/build-all.*` 产好再推仓库；
+#   * 镜像名可通过环境变量覆盖（默认指向本地 tag，可改成你的 registry，
+#     例如 IMAGE_PREFIX=registry.cn-hangzhou.aliyuncs.com/yourname）；
+#   * `restart: unless-stopped` + 健康检查 + 只暴露必要端口。
+#
+# 用法：
+#   # 1) 在构建机上产出并推送镜像
+#   scripts/build-all.sh --with-java
+#   for t in ...; do docker push ...; done
+#
+#   # 2) 在部署机上
+#   export GZCTF_FLAG=...        # 平台注入，或用 .env
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml --profile java up -d
+#
+# 注意：DASCTF/GZCTF 会为每个实例注入动态 flag（DASFLAG / GZCTF_FLAG），
+#       请**不要**在 .env 里设置 STATIC_FLAG，否则会覆盖动态 flag 的兜底逻辑。
+# =============================================================================
+
+x-image-prefix: &prefix ${IMAGE_PREFIX:-}
+
+x-flag-env: &flag-env
+  GZCTF_FLAG: ${GZCTF_FLAG:-}
+  DASFLAG: ${DASFLAG:-}
+  FLAG: ${FLAG:-}
+  RESET_TOKEN: ${RESET_TOKEN:-}
+
+x-py-healthcheck: &py-healthcheck
+  test:
+    - CMD-SHELL
+    - >-
+      python -c "import urllib.request,sys;
+      sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/healthz',timeout=3).status==200 else 1)"
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 15s
 
 services:
-  ssti-challenge:
-    image: 4c69/ssti_labs_e:ssti_v1
-    container_name: ssti-challenge
+  jinja-waf-fenjing:
+    image: ${IMAGE_PREFIX:-}ssti-jinja-waf-fenjing:${IMAGE_TAG:-latest}
+    container_name: ssti-01-jinja-waf-fenjing
     ports:
-      - "5000:5000"
+      - "${JINJA_WAF_PORT:-8091}:5000"
     environment:
-      - FLASK_ENV=production
-      - FLASK_DEBUG=0
+      <<: *flag-env
+      LAB_ID: jinja-waf-fenjing
+      STATIC_FLAG: ${STATIC_FLAG_JINJA_WAF:-flag{jinja_waf_fenjing}}
+    healthcheck: *py-healthcheck
     restart: unless-stopped
+
+  jinja-chain:
+    image: ${IMAGE_PREFIX:-}ssti-jinja-chain:${IMAGE_TAG:-latest}
+    container_name: ssti-02-jinja-chain
+    ports:
+      - "${JINJA_CHAIN_PORT:-8092}:5000"
+    environment:
+      <<: *flag-env
+      LAB_ID: jinja-chain
+      STATIC_FLAG: ${STATIC_FLAG_JINJA_CHAIN:-flag{jinja_chain}}
+    healthcheck: *py-healthcheck
+    restart: unless-stopped
+
+  mako-chain:
+    image: ${IMAGE_PREFIX:-}ssti-mako-chain:${IMAGE_TAG:-latest}
+    container_name: ssti-03-mako-chain
+    ports:
+      - "${MAKO_CHAIN_PORT:-8093}:5000"
+    environment:
+      <<: *flag-env
+      LAB_ID: mako-chain
+      STATIC_FLAG: ${STATIC_FLAG_MAKO_CHAIN:-flag{mako_chain}}
+    healthcheck: *py-healthcheck
+    restart: unless-stopped
+
+  tornado-chain:
+    image: ${IMAGE_PREFIX:-}ssti-tornado-chain:${IMAGE_TAG:-latest}
+    container_name: ssti-04-tornado-chain
+    ports:
+      - "${TORNADO_CHAIN_PORT:-8094}:5000"
+    environment:
+      <<: *flag-env
+      LAB_ID: tornado-chain
+      STATIC_FLAG: ${STATIC_FLAG_TORNADO_CHAIN:-flag{tornado_chain}}
+    healthcheck: *py-healthcheck
+    restart: unless-stopped
+
+  jinja-sandbox:
+    image: ${IMAGE_PREFIX:-}ssti-jinja-sandbox:${IMAGE_TAG:-latest}
+    container_name: ssti-05-jinja-sandbox
+    ports:
+      - "${JINJA_SANDBOX_PORT:-8095}:5000"
+    environment:
+      <<: *flag-env
+      LAB_ID: jinja-sandbox
+      STATIC_FLAG: ${STATIC_FLAG_JINJA_SANDBOX:-flag{jinja_sandbox_escape}}
+    healthcheck: *py-healthcheck
+    restart: unless-stopped
+
+  blind-ssti:
+    image: ${IMAGE_PREFIX:-}ssti-blind:${IMAGE_TAG:-latest}
+    container_name: ssti-06-blind-ssti
+    ports:
+      - "${BLIND_SSTI_PORT:-8096}:5000"
+    environment:
+      <<: *flag-env
+      LAB_ID: blind-ssti
+      STATIC_FLAG: ${STATIC_FLAG_BLIND:-flag{blind_ssti}}
+      SSTI_ECHO_DIR: ${SSTI_ECHO_DIR:-/app/echo}
+    healthcheck: *py-healthcheck
+    restart: unless-stopped
+
+  flask-memshell:
+    image: ${IMAGE_PREFIX:-}ssti-flask-memshell:${IMAGE_TAG:-latest}
+    container_name: ssti-07-flask-memshell
+    ports:
+      - "${FLASK_MEMSHELL_PORT:-8097}:5000"
+    environment:
+      <<: *flag-env
+      LAB_ID: flask-memshell
+      STATIC_FLAG: ${STATIC_FLAG_MEMSHELL:-flag{flask_memshell}}
+      SSTI_NO_EGRESS: "1"
+      SSTI_ECHO_DIR: ${SSTI_ECHO_DIR:-/app/echo}
+    # ⚠️ 删掉 cap_add 出网就切不断，「不出网」这个前提随之失效
+    cap_add:
+      - NET_ADMIN
+    healthcheck: *py-healthcheck
+    restart: unless-stopped
+
+  freemarker-memshell:
+    profiles: ["java"]
+    image: ${IMAGE_PREFIX:-}ssti-freemarker-memshell:${IMAGE_TAG:-latest}
+    container_name: ssti-08-freemarker-memshell
+    ports:
+      - "${FREEMARKER_MEMSHELL_PORT:-8098}:8080"
+    environment:
+      GZCTF_FLAG: ${GZCTF_FLAG:-}
+      DASFLAG: ${DASFLAG:-}
+      FLAG: ${FLAG:-}
+      STATIC_FLAG: ${STATIC_FLAG_FREEMARKER:-flag{freemarker_memshell}}
+      JAVA_OPTS: ${JAVA_OPTS:--Xms64m -Xmx256m -Dfile.encoding=UTF-8}
+    cap_add:
+      - NET_ADMIN
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/status"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s 
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 40s
+    restart: unless-stopped

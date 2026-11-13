@@ -27,8 +27,7 @@
 *.txt text eol=lf
 
 # 代码文件
-*.py text eol=lf
-*.js text eol=lf
+*.py text eol=lf*.js text eol=lf
 *.jsx text eol=lf
 *.ts text eol=lf
 *.tsx text eol=lf
@@ -54,3 +53,13 @@
 *.ps1 text eol=crlf
 *.bat text eol=crlf
 *.cmd text eol=crlf 
+# 无扩展名 / 特殊文件名（Dockerfile 里 COPY 的 shell 脚本必须是 LF，
+# 否则 sh 会因 CRLF 报 "not found"）
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf
+Makefile text eol=lf
+.dockerignore text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.env.example text eol=lf
+*.b64 text eol=lf

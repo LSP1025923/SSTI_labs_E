@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>2.7.18</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.lab</groupId>
+  <artifactId>themepreview</artifactId>
+  <version>1.0.0</version>
+  <name>theme-preview</name>
+  <description>Java SSTI lab: FreeMarker / Thymeleaf -&gt; Tomcat in-memory webshell (no egress)</description>
+
+  <properties>
+    <java.version>8</java.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!--
+      故意降级 FreeMarker 到 2.3.29：
+      2.3.30 起官方把 freemarker.template.utility.Execute 判为 RCE 危险类并移除了内置的
+      INSTANCE 静态实例，同时收紧了 ?new 的默认白名单。Spring Boot 2.7.x 默认带 2.3.31，
+      老应用（Boot 2.2 以前）普遍是 2.3.29，这里还原真实的老生产环境。
+      注意：真正造成 RCE 的是 Configuration#setNewBuiltinClassResolver(UNRESTRICTED_RESOLVER)
+      这个配置错误，而不是版本本身 —— 见 README。
+    -->
+    <freemarker.version>2.3.29</freemarker.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-thymeleaf</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.freemarker</groupId>
+      <artifactId>freemarker</artifactId>
+      <version>${freemarker.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <mainClass>com.lab.themepreview.ThemePreviewApplication</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

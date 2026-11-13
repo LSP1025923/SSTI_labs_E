@@ -1,0 +1,25 @@
+{
+  "name": "ssti-lab-console",
+  "private": true,
+  "version": "1.0.0",
+  "description": "统一 SSTI 靶场控制台前端（Vite + React 18），运行时通过 HTTP API 自描述，可复用进所有控制台型靶场容器。",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}

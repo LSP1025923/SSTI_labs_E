@@ -1,47 +1,61 @@
-# Node.js
-node_modules/
+# =============================================================================
+# 根构建上下文忽略规则
+#
+# ⚠️ 关键背景：每个 Python 靶场的构建上下文是**仓库根目录**
+#    （因为 Dockerfile 要 COPY shared/ 与 labs/<靶场>/），
+#    所以这份 .dockerignore 直接决定了每次 docker build 要上传多少数据。
+#    漏掉 node_modules 或 .git 会让上下文从几 MB 涨到几百 MB。
+# =============================================================================
+
+# ---- 版本控制 / CI ----------------------------------------------------------
+.git/
+.gitattributes
+.github/
+
+# ---- Node / 前端 ------------------------------------------------------------
+# 前端在**镜像内**构建（frontend/Dockerfile 的多阶段），产物由
+# ssti-frontend:local 这个命名阶段提供，不需要宿主机产物进上下文。
+**/node_modules/
+frontend/build/
+frontend/node_modules/
 npm-debug.log*
-yarn-debug.log*
 yarn-error.log*
 
-# React build
-build/
-dist/
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
+# ---- Python -----------------------------------------------------------------
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+.venv/
 venv/
-ENV/
-env.bak/
-venv.bak/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# IDE
-.vscode/
+# ---- Java ------------------------------------------------------------------
+labs/08-freemarker-memshell/target/
+
+# ---- 密钥 / flag（绝不能进构建上下文） --------------------------------------
+.env
+.env.*
+!.env.example
+flag.txt
+**/flag.txt
+
+# ---- 编辑器 / 系统 ----------------------------------------------------------
 .idea/
+.vscode/
+*.iml
 *.swp
 *.swo
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Git
-.git/
-.gitignore
+# ---- 文档（不需要进任何镜像） ------------------------------------------------
+docs/*.png
+docs/assets/
 
-# Docker
-Dockerfile
-.dockerignore
-
-# 其他
+# ---- 运行时产物 -------------------------------------------------------------
 *.log
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local 
+logs/
+
+# 注意：**不要**忽略 shared/、labs/、frontend/Dockerfile —— 它们是构建所需。
