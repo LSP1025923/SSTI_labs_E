@@ -11,20 +11,26 @@ from __future__ import annotations
 from typing import Any
 
 from ssti_core.level import Level
-from ssti_core.levels import jinja, mako, tornado
+from ssti_core.levels import jinja, mako, sandbox, tornado
 
-#: 引擎 id -> 关卡列表
+#: 注册键 -> 关卡列表。
+#:
+#: 多数情况下注册键就是 ``ENGINE``；但沙箱关卡（``sandbox.ENGINE == "jinja"``）
+#: 与 13 关 WAF 链共用同一个引擎展示分组，**不能**用 ``"jinja"`` 当键，
+#: 否则会覆盖 ``jinja.ALL``——所以它用自己的 ``sandbox.REGISTRY_KEY``。
 _BY_ENGINE: dict[str, list[Level]] = {
     jinja.ENGINE: jinja.ALL,
     mako.ENGINE: mako.ALL,
     tornado.ENGINE: tornado.ALL,
+    sandbox.REGISTRY_KEY: sandbox.ALL,
 }
 
-#: 引擎 id -> 展示名
+#: 注册键 -> 展示名
 ENGINE_TITLES: dict[str, str] = {
     jinja.ENGINE: jinja.ENGINE_TITLE,
     mako.ENGINE: mako.ENGINE_TITLE,
     tornado.ENGINE: tornado.ENGINE_TITLE,
+    sandbox.REGISTRY_KEY: sandbox.ENGINE_TITLE,
 }
 
 

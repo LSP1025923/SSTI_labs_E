@@ -6,7 +6,7 @@ services:
     image: ctf/freemarker-memshell:latest
     container_name: freemarker-memshell
     ports:
-      - "${MEM_LAB_PORT:-8088}:8080"
+      - "${FREEMARKER_MEMSHELL_PORT:-8098}:8080"
     environment:
       # Flag 注入优先级：GZCTF_FLAG > DASFLAG > FLAG > STATIC_FLAG
       GZCTF_FLAG: "${GZCTF_FLAG:-}"

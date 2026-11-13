@@ -107,11 +107,16 @@ def L06() -> Level:
         title="L6 - 禁止下划线",
         summary="过滤 _",
         description=(
-            "出现 `_` 即返回 `WAF`。所有 `__class__` / `__globals__` 这类魔术属性"
-            "都不能直接写。"
+            "出现 `_` **字符**即返回 `WAF`。注意这不是禁子串 `__`，而是禁单个 `_`："
+            "所以 `'_'~'_'~'class'…` 这类「拆开写」的写法在本关**同样过不去**，"
+            "因为源码里仍然出现了 `_`。"
         ),
-        waf=WafSpec(chars=("_",), note="包含 `_` 即返回 `WAF`。"),
-        hint="`|attr` 过滤器接受**字符串**形式的属性名，而字符串可以从请求参数里取。",
+        waf=WafSpec(chars=("_",), note="包含 `_` 即返回 `WAF`（单个字符，不是子串）。"),
+        hint=(
+            "两条路：① 属性名从请求里带（`request.args.x`），payload 里一个 `_` 都不出现；"
+            "② 运行期造出下划线字符，例如 `'%c'|format(95)` 就是 `_`。"
+            "另外注意 `__globals__` 是 dict，`|attr` 对 dict 不走下标，要用 `[]`。"
+        ),
     )
 
 
@@ -122,9 +127,16 @@ def L07() -> Level:
         engine=ENGINE,
         title="L7 - 禁止点号",
         summary="过滤 .",
-        description="出现 `.` 即返回 `WAF`。属性访问的语法糖被封，改用 `|attr` 或下标。",
+        description=(
+            "出现 `.` 即返回 `WAF`。属性访问的点号语法被封，但方括号（下标）没有拦。"
+        ),
         waf=WafSpec(chars=(".",), note="包含 `.` 即返回 `WAF`。"),
-        hint="`|attr` 不经过点号；`[]` 在本关没有被拦。",
+        hint=(
+            "用 `obj[key]` 替代 `obj.key`。**不要用 `|attr`**：Jinja 的 `.` 访问会"
+            "先试 `getattr` 再回退到 `__getitem__`，而 `|attr` 只做纯 `getattr`，"
+            "对 dict 不会回退——`lipsum.__globals__.os` 能用，"
+            "`lipsum|attr('__globals__')|attr('os')` 会抛 UndefinedError。"
+        ),
     )
 
 
@@ -138,7 +150,8 @@ def L08() -> Level:
         description=(
             "载荷中不能出现以下任一**子串**（大小写敏感）：`class`, `arg`, `form`, "
             "`value`, `data`, `request`, `init`, `global`, `open`, `mro`, `base`, `attr`。"
-            "注意 `getattr` 含 `attr`、`request` 自身就是入口，都被封了。"
+            "注意 `attr` 在表里，所以 **`|attr` 这个过滤器本身就写不出来**；"
+            "`global` 也在表里，`__globals__` 同样不能原样出现。"
         ),
         waf=WafSpec(
             substrings=(
@@ -146,10 +159,13 @@ def L08() -> Level:
                 "init", "global", "open", "mro", "base", "attr",
             ),
             ignore_case=False,
-            note="命中任一子串即返回 `WAF`（大小写敏感）。",
+            note="命中任一子串即返回 `WAF`（大小写敏感）。`attr` 在表内 ⇒ 不能用 `|attr`。",
         ),
-        hint="把关键字拼出来：Jinja 里字符串拼接、`|join`、`~` 都能拼；"
-        "也可以从 `request.args` 直接读——但 `request` 也被拦，想想其它取值通道。",
+        hint=(
+            "用 `~` 把关键字拼出来（源码里不出现被禁子串，运行期属性名却是对的），"
+            "再用**下标**取属性：`lipsum['__glo'~'bals__']['o'~'s']…`。"
+            "`|attr` 在本关不可用，`|join` 之类的拼接过滤器可以作为 `~` 的替代。"
+        ),
     )
 
 

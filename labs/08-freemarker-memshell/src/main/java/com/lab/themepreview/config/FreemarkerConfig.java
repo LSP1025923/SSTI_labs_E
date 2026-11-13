@@ -4,7 +4,8 @@ import freemarker.core.TemplateClassResolver;
 import freemarker.template.Configuration;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+// 注意：不要 import org.springframework.context.annotation.Configuration —— 它和
+// freemarker.template.Configuration 同名，会撞车。下面用全限定名。
 
 /**
  * ★ 漏洞点 1 的成因就在这个类里。
@@ -21,7 +22,7 @@ import org.springframework.context.annotation.Configuration;
  * 就得到最经典的 FreeMarker SSTI RCE：
  *   ${"freemarker.template.utility.Execute"?new()("id")}
  */
-@Configuration
+@org.springframework.context.annotation.Configuration
 public class FreemarkerConfig {
 
     /**

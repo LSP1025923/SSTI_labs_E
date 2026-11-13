@@ -45,6 +45,9 @@ class LabSpec:
     apt_packages: list[str] = field(default_factory=list)
     #: 应用监听端口（容器内）
     app_port: int = 5000
+    #: 手写编排：登记在表里（端口分配的唯一来源），但生成器**不会**碰它的文件。
+    #: Java 靶场就是这种情况 —— 它的 Dockerfile/compose 与 Python 系完全不同。
+    handwritten: bool = False
 
 
 LABS: dict[str, LabSpec] = {
@@ -118,6 +121,24 @@ LABS: dict[str, LabSpec] = {
         scenario=True,
         apt_packages=["iptables"],
     ),
+    # Java 系靶场：只登记端口（让 --list 成为端口分配的唯一来源），
+    # 其 Dockerfile / docker-compose.yml / entrypoint.sh 均由该靶场手写维护。
+    # 为什么不让生成器管：它用 Maven 多阶段构建、运行阶段是 alpine + JRE，
+    # 且 build context 是靶场目录本身（不需要 shared/ 与统一前端），
+    # 与 Python 系的模板没有共同点 —— 套模板只会产生误导性文件。
+    "08-freemarker-memshell": LabSpec(
+        dirname="08-freemarker-memshell",
+        lab_id="freemarker-memshell",
+        image="ssti-freemarker-memshell",
+        port=8098,
+        port_env="FREEMARKER_MEMSHELL_PORT",
+        static_flag="flag{freemarker_memshell}",
+        title="不出网 SSTI：Java FreeMarker/Thymeleaf → Tomcat 内存马",
+        no_egress=True,
+        scenario=True,
+        app_port=8080,
+        handwritten=True,
+    ),
 }
 
 #: 生成器统一使用的 Dockerfile 头注释
@@ -141,7 +162,7 @@ FROM ${{FRONTEND_IMAGE}} AS frontend
 """
 
 _EGRESS_SETUP = r"""
-# 出网切断：容器内以 root 启动，先落 iptables 规则再降权/启动应用。
+# 出网切断：先落 iptables 规则，再启动应用（本仓库不做权限降级，容器内以 root 运行）。
 # 规则只丢弃**新建**的对外连接（--syn），因此宿主机映射进来的入站端口不受影响。
 # iptables 不可用时只告警不退出 —— 靶场不能因为加固失败而起不来。
 block_egress() {
@@ -314,6 +335,9 @@ def write_file(path: Path, content: str, *, force: bool) -> bool:
 
 def scaffold(spec: LabSpec, *, force: bool) -> None:
     target = LABS_DIR / spec.dirname
+    if spec.handwritten:
+        print(f"[{spec.dirname}] 手写编排（端口 {spec.port} / {spec.port_env}），生成器跳过")
+        return
     print(f"[{spec.dirname}] -> {target.relative_to(ROOT)}")
     write_file(target / "Dockerfile", render_dockerfile(spec), force=force)
     write_file(target / "docker-compose.yml", render_compose(spec), force=force)

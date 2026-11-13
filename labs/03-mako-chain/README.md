@@ -35,7 +35,7 @@ Mako 与 Jinja 的差别不是「语法糖不同」，而是**求值模型不同
  'lipsum', 'cycler', 'joiner', 'namespace', 'capture', 'caller', 'self', 'local']
 ```
 
-前 10 个来自 `ssti_core/engines/mako.py` 的 `_flask_context()`（`request` / `session` /
+前 10 个来自 `shared/ssti_core/engines/mako.py` 的 `_flask_context()`（`request` / `session` /
 `g` / `url_for` / `get_flashed_messages` / `config` + Jinja 的 `lipsum` / `cycler` /
 `joiner` / `namespace`），后 4 个是 Mako 自己的模板命名空间。
 
@@ -267,7 +267,9 @@ ${open('/flag').read()}→ flag{doc_probe}
 | `${chr}` | `<built-in function chr>` |
 | `${lipsum}` / `${session}` / `${g}` | 可用（`lipsum` / `session` / `g` 都不在黑名单里） |
 | `${config}` / `${self}` / `${app}` | `WAF`（子串 `config` / `self` / `app` 命中） |
-| `${url_for}` | 未在 id 12 上单独实测（id 10 上可用） |
+| `${url_for}` / `${get_flashed_messages}` | `WAF`（`get_flashed_messages` 里含子串 `self`） |
+| `${joiner}` / `${namespace}` | 可用（`<class 'jinja2.utils.Joiner'>` / `...Namespace'>`） |
+| `${os}` | **`NameError: Undefined`**（`os` 不在黑名单，但 import 之前命名空间里没有它） |
 | `<%!import os%>` | 空输出、不报错 |
 | **`<%!import os%>${os}`** | **`<module 'os' (frozen)>`** ✅ |
 | `<%context.write(True)%>` | `WAF`（`context.write` 含 `.`） |
@@ -333,7 +335,7 @@ curl -s -X POST localhost:8093/api/render \
 ## 出题提示
 
 - 这一关的教学价值高度依赖「渲染器注入了 Flask 同构上下文」。如果哪天把
-  `ssti_core/engines/mako.py` 的 `_flask_context()` 删了，Mako 关会退化成
+  `shared/ssti_core/engines/mako.py` 的 `_flask_context()` 删了，Mako 关会退化成
   「Mako 语法练习」，与 Jinja 关失去对照意义。
 - 想让难度曲线更平滑，可以把 id 10–12 的规则拆成「只禁引号」「只禁加号」两档，
   每档都保留一条短解；现在的设计是直接跳到 CTF 硬关。
