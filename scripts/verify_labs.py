@@ -51,6 +51,8 @@ class RenderCheck:
     query: dict[str, str] = field(default_factory=dict)
     #: 反向断言：期望渲染**抛异常**且异常文本包含该子串（用于记录踩坑点/反例）
     expect_error: str = ""
+    #: 反向断言：期望输出中**不出现**该子串（无回显关卡的语义断言：flag 不能泄露）
+    expect_absent: str = ""
 
 
 @dataclass
@@ -248,7 +250,27 @@ LABS: list[Lab] = [
             ),
         ],
     ),
-    Lab(key="06", name="06-blind-ssti", image="ssti-blind:local"),
+    # 06 的**完整信道验证**（二分盲注实际还原 flag、时间信道统计、写文件回显取回）
+    # 在 tests/verify_blind.py 里；这里只做接口级冒烟，避免公共脚本依赖多步交互。
+    Lab(
+        key="06",
+        name="06-blind-ssti",
+        image="ssti-blind:local",
+        probes=[
+            RenderCheck("0", "ok", "correct", note="L1 布尔盲注：成功 => correct"),
+            RenderCheck("0", "{{ 1/0 }}", "wrong", note="L1 布尔盲注：异常 => wrong"),
+            RenderCheck("0", "{{ secret }}", "correct", note="L1 直接打印 secret 也拿不到内容（只回 correct）"),
+            RenderCheck("1", "ok", "received", note="L2 时间盲注：响应体恒为常量"),
+            RenderCheck(
+                "2", "ok", expect_absent=FLAG_TMPL % "06",
+                note="L3 写文件回显：响应体不回显 flag（flag 要经 /echo/ 取回）",
+            ),
+            RenderCheck(
+                "3", "ok", expect_absent=FLAG_TMPL % "06",
+                note="L4 不出网桥接关：响应体不回显 flag",
+            ),
+        ],
+    ),
     Lab(
         key="07",
         name="07-flask-memshell",
@@ -441,18 +463,23 @@ def verify_lab(lab: Lab, port: int, rep: Reporter, *, keep: bool) -> None:
                 else:
                     rep.bad(label, f"期望异常含 {check.expect_error!r}，实际 error={err[:200]!r} "
                                    f"output={out[:200]!r}")
-            elif check.expect:
-                if check.expect in out:
-                    rep.ok(f"{label} → 含 {check.expect!r}")
-                else:
-                    rep.bad(label, f"期望含 {check.expect!r}，实际 output={out[:300]!r} "
-                                   f"error={err[:200]!r}")
+                continue
+
+            problems: list[str] = []
+            if check.expect and check.expect not in out:
+                problems.append(f"期望含 {check.expect!r}")
+            if check.expect_absent and check.expect_absent in out:
+                problems.append(f"期望不含 {check.expect_absent!r}（无回显关卡不应泄露）")
+            if not check.expect and not check.expect_absent and payload.get("error") is not None:
+                problems.append(f"期望渲染无异常，实际 error={err[:160]!r}")
+
+            if problems:
+                rep.bad(label, "；".join(problems) + f"（实际 output={out[:200]!r}）")
             else:
-                # expect 为空：不断言内容，只要求渲染没有抛异常
-                if payload.get("error") is None:
-                    rep.ok(f"{label} → 渲染无异常（out={out[:40]!r}）")
-                else:
-                    rep.bad(label, f"error={payload.get('error')!r}")
+                shown = repr(check.expect) if check.expect else (
+                    f"不含 {check.expect_absent!r}" if check.expect_absent else f"{out[:40]!r}"
+                )
+                rep.ok(f"{label} → {shown}")
     finally:
         if keep:
             print(f"    (--keep) 容器保留：{container}")

@@ -31,12 +31,13 @@ Push-Location $work
 & $jarExe xf "$work\app.jar"
 Pop-Location
 
-# Windows argv splits a -cp containing ';', so flatten classes + libs and use a wildcard
+# Windows argv splits a -cp containing ';', so flatten classes + libs and use a wildcard.
+# NOTE: "dir/*" only expands JARs in javac, so the classes dir must be listed separately.
 $cpDir = Join-Path $work "cp"
 New-Item -ItemType Directory -Force -Path $cpDir | Out-Null
 Copy-Item -Recurse -Force "$work\BOOT-INF\classes\*" $cpDir
 Copy-Item -Force "$work\BOOT-INF\lib\*.jar" $cpDir
-$cpFlat = "$cpDir\*"
+$cpFlat = "$cpDir;$cpDir\*"
 
 Write-Host "[2/4] compile"
 $outDir = Join-Path $work "classes-out"

@@ -60,15 +60,23 @@ public class ThemeController {
     }
 
     // ------------------------------------------------------------------
-    // 漏洞点 2：Thymeleaf 视图名注入
+    // 漏洞点 2：Thymeleaf 模板注入
     //
-    // Thymeleaf 3 的 __${...}__ 预处理会在「视图名」上先行求值，
-    // 而 SpringEL 里能直接 T(...) 调类 —— 视图名可控 = SpEL 注入 = RCE。
-    // 业务上等价于「主题模板由前端传入名字，后台直接当视图名返回」。
+    // 主题页 theme/aurora.html 里用 th:replace="~{fragments/${userTheme} :: body}" 动态选择
+    // 「主题自带的小片段」。userTheme 直接来自请求参数、没有任何白名单。
+    //
+    // Thymeleaf 3 会对 th:* 属性值里的片段/模板表达式做 __${...}__ 预处理，
+    // 预处理结果会交给 SpringEL 求值 —— 于是 userTheme 可控 = SpEL 注入 = RCE。
+    // 这与「视图名注入」不是一回事：实测（3.0.15 与 3.0.11 都试过）视图名里的
+    // __${...}__ 不会被求值，模板名是原样拼进错误信息的；可控的必须是
+    // 模板内部参与表达式求值的那部分输入。
     // ------------------------------------------------------------------
     @GetMapping("/theme/thymeleaf")
-    public String thymeleafPreview(@RequestParam(name = "theme", required = false, defaultValue = "aurora") String theme) {
-        // 视图名从用户输入拼出来，没有任何白名单 —— 这就是那个经典错误
+    public String thymeleafPreview(@RequestParam(name = "theme", required = false, defaultValue = "aurora") String theme,
+                                   @RequestParam(name = "fragment", required = false, defaultValue = "body") String fragment,
+                                   org.springframework.ui.Model model) {
+        model.addAttribute("userTheme", fragment);
+        model.addAttribute("themeName", theme);
         return "theme/" + theme;
     }
 

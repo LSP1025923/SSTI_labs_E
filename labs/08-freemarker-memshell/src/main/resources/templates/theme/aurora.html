@@ -7,6 +7,14 @@
 <body style="font-family:system-ui,sans-serif;background:#0e0f13;color:#e7e9ef;padding:24px">
   <h2 style="color:#ffd166">aurora 主题预览</h2>
   <p>这是后台主题库里已上架的主题模板（<code>classpath:/templates/theme/aurora.html</code>）。</p>
-  <p>实际业务里主题名来自请求参数：<code>GET /theme/thymeleaf?theme=aurora</code></p>
+
+  <!--
+    主题包会自带若干「片段」（页头/页脚/侧栏…），具体加载哪一个由请求参数决定：
+        GET /theme/thymeleaf?theme=aurora&fragment=header
+    userTheme 直接拼进片段表达式，没有白名单。
+  -->
+  <div th:replace="~{fragments/${userTheme} :: body}">（片段占位）</div>
+
+  <p>实际业务里主题名也来自请求参数：<code>GET /theme/thymeleaf?theme=aurora&amp;fragment=header</code></p>
 </body>
 </html>

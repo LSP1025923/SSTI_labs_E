@@ -24,8 +24,8 @@
 | [`02-jinja-chain`](labs/02-jinja-chain/README.md) | 8092 | Jinja2（Flask `render_template_string`） | 13 | 否 | Jinja2 WAF 链：13 关递增过滤，逐层绕过 |
 | [`03-mako-chain`](labs/03-mako-chain/README.md) | 8093 | Mako | 13 | 否 | 与 Jinja 同构的 13 关，但 Mako 编译成 Python 模块 —— `${` 被拦还有 `<% %>` |
 | [`04-tornado-chain`](labs/04-tornado-chain/README.md) | 8094 | Tornado | 13 | 否 | 同构链的 Tornado 版：`escape` / `datetime` / `handler` 桩 + `{% import %}` 直导模块 |
-| [`05-jinja-sandbox`](labs/05-jinja-sandbox/) | 8095 | Jinja2 `SandboxedEnvironment` | — | 否 | 沙箱逃逸专项（**脚手架已生成，`app.py` 未完成**） |
-| [`06-blind-ssti`](labs/06-blind-ssti/) | 8096 | Jinja2 | — | 否 | 无回显 SSTI：盲注与侧信道（**脚手架已生成，`app.py` 未完成**） |
+| [`05-jinja-sandbox`](labs/05-jinja-sandbox/README.md) | 8095 | Jinja2 `SandboxedEnvironment` | 4 | 否 | 沙箱逃逸：**精确锁 `Jinja2==3.1.5`**，用 CVE-2025-27516 的只读属性遍历突破沙箱，再扛关键字/字符黑名单 |
+| [`06-blind-ssti`](labs/06-blind-ssti/README.md) | 8096 | Jinja2 | 4 | 否 | 无回显 SSTI：布尔盲注 → 时间盲注 → 写文件侧信道 → 不出网过渡（指向 07） |
 | [`07-flask-memshell`](labs/07-flask-memshell/README.md) | 8097 | Jinja2 → Flask | 5（攻击链台阶） | **是** | 不出网：写文件侧信道 → 绕过 `setupmethod` 把 webshell 注进运行中的 Flask |
 | [`08-freemarker-memshell`](labs/08-freemarker-memshell/) | 8098 | FreeMarker / Thymeleaf → Tomcat | 4 | **是** | 不出网：Java 侧同构目标，`?new()` + `UNRESTRICTED` 类解析器 → Tomcat Filter 内存马 |
 
