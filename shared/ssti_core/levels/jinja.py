@@ -241,8 +241,10 @@ def L13() -> Level:
         summary="最严一关：符号 + 关键字双重封堵",
         description=(
             "综合黑名单：符号 `_ . \\ ' \" + [ ]` 与子串 `request`、`class`、`init`、"
-            "`arg`、`config`、`app`、`self`。注意 `init` 会命中 `print` 里的子串——"
-            "连调试输出都要换写法。"
+            "`arg`、`config`、`app`、`self`。"
+            "注意子串判定是**大小写敏感**的整体匹配：`init` 会拦掉 `__init__`、"
+            "`arg` 会拦掉 `args`/`getattr` 之外的 `argv` 一类写法，"
+            "`self` 会拦掉 `self` 本身。写 payload 前先逐个子串过一遍。"
         ),
         waf=WafSpec(
             chars=("_", ".", "\\", "'", '"', "+", "[", "]"),

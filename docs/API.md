@@ -140,3 +140,28 @@
 - `GET /api/lab-info` → 至少包含 `id / title / description / no_egress / levels[]`，
   其中 `levels[]` 用 `{id,title,description}` 描述攻击链步骤，供总览页展示。
 - `/flag` 由 entrypoint 从环境变量写入。
+
+场景型靶场把业务页面放在 `/`，把统一控制台挂在 **`/console/`**（见
+`ssti_core.labapp.mount_console`）。检测方式：`GET /console/` 应返回引用
+`assets/` 的前端页面；`GET /` 返回业务页面。
+
+---
+
+## 6. 边界与易误解点（实现者与前端都必须按这里来）
+
+这一节是对前面契约的**收敛**，来自实际联调中暴露的歧义。新增实现请勿偏离。
+
+| # | 问题 | 约定 |
+|---|------|------|
+| 1 | 盲关怎么判断成功？ | **只有一个信号：`ok`。** `echo_mode="bool"` 时后端返回 `ok:true, output:"correct"` 或 `ok:false, output:"wrong"`；`echo_mode="none"` 时 `ok` 仍表示渲染是否抛异常，但 `output` 恒定（`echo_text`），**不要**用它判断结果。前端只需要看 `ok`，并额外展示 `output` 原文。 |
+| 2 | `level.id` 的类型 | **字符串**，实现必须保证。前端应做 `String()` 归一后再比较，容忍历史实现里的整数。 |
+| 3 | `/api/god/source` 失败时返回什么 | `500` + `{"ok": false, "error": "<原因>"}`。前端要同时容忍「非 2xx」与「2xx 但 `ok:false`」两种形态。 |
+| 4 | `theme.glow` 是什么 | **一个 CSS 颜色值**（通常 `rgba(...)`），不是完整的 `box-shadow` 字符串。前端自行拼 `box-shadow`；缺失时用 `accent` 推导一个 rgba 兜底。 |
+| 5 | `truncated` 的语义 | 输出**从尾部截断**，前缀保留；上限来自环境变量 `SSTI_MAX_OUTPUT_CHARS`（默认 262144）。被截断时 `output` 末尾会附加 `\n... [输出已截断]`。前端只需给出提示，不需要自己再截。 |
+| 6 | `/api/render` 的 4xx/5xx 响应体 | 统一 `{"ok": false, "error": "<原因>"}`；未知 `engine`/`level` **不报错**，按 `find_level` 规则回落到该引擎的第一关。 |
+| 7 | `engine_title` 与 `engines[].title` 重复 | `engines[]` 是权威列表，`engine_title` 只是 `lab-info.engine` 的展示名便捷字段。两者冲突时以前者为准。 |
+| 8 | 每关的 `no_egress` 有没有说明文字 | 没有。文字说明在 `lab-info.no_egress_note`（靶场级）。前端只给标签、不加 tooltip。 |
+| 9 | 关卡 `waf` 的字段 | `kind` ∈ `none` / `prefix` / `substring` / `chars` / `regex` / `combo`；`items` 是 `substrings + chars + regexes` 的合并列表（便于前端一行渲染）；`substrings` / `chars` / `regexes` / `prefix` / `suffix` 为可选细分字段；`waf` 为 `null` 表示无过滤。 |
+| 10 | `flag_found` 的判定 | 后端在 `output`（练习模式）与 `raw_output`（上帝模式）里任一出现 `/flag` 内容即置 `true`。**不要**在前端自己判断。 |
+| 11 | `mode=god` 时的 `raw_output` | 普通关与 `output` 相同；盲关是**未经 correct/wrong 包装**的真实渲染结果；`echo_mode="none"` 时同样是真实结果（这是上帝模式对出题人的主要价值）。 |
+

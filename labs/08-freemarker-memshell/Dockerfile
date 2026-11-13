@@ -10,12 +10,13 @@
 FROM maven:3.6.3-jdk-8 AS build
 WORKDIR /build
 
-# 先只拷 pom.xml，把依赖缓存成独立的一层，改源码后 rebuild 不用重新下载依赖。
+# 先把源码和 pom 一起拷进来解依赖。
+# 注意：不要把 dependency:go-offline 单独放在 COPY src 之前 —— 它对
+# spring-boot-starter-* 这类 BOM 管理的依赖解析结果不可靠，实测编译阶段会缺 jar。
 COPY pom.xml .
-RUN mvn -B -q dependency:go-offline
-
 COPY src ./src
-RUN mvn -B -q package -DskipTests \
+RUN mvn -B -q dependency:resolve-plugins dependency:resolve dependency:resolve \
+ && mvn -B -q package -DskipTests \
  && cp target/themepreview-1.0.0.jar /build/app.jar
 
 # --------------------------------------------------------------------------

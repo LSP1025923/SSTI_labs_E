@@ -21,14 +21,16 @@
     <java.version>8</java.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <!--
-      故意降级 FreeMarker 到 2.3.29：
-      2.3.30 起官方把 freemarker.template.utility.Execute 判为 RCE 危险类并移除了内置的
-      INSTANCE 静态实例，同时收紧了 ?new 的默认白名单。Spring Boot 2.7.x 默认带 2.3.31，
-      老应用（Boot 2.2 以前）普遍是 2.3.29，这里还原真实的老生产环境。
+      故意降级 FreeMarker 到 2.3.28（Spring Boot 2.7.18 默认带 2.3.31）：
+        * 2.3.30+ 官方把 freemarker.template.utility.Execute 判为 RCE 危险类，
+          移除了它的 INSTANCE 静态实例并收紧了 ?new 的默认白名单；
+        * 2.3.29 又顺手删掉了 freemarker.template.ObjectConstructor 这个老的内置类。
+      2.3.28 是同时还有 Execute 和 ObjectConstructor 的最后版本之一，
+      也正是当年这批「老 Java 应用」真实带在身上的版本，最贴近事故现场。
       注意：真正造成 RCE 的是 Configuration#setNewBuiltinClassResolver(UNRESTRICTED_RESOLVER)
-      这个配置错误，而不是版本本身 —— 见 README。
+      这个配置错误，而不是版本本身 —— 见 README「为什么这个靶场能用 ?new」。
     -->
-    <freemarker.version>2.3.29</freemarker.version>
+    <freemarker.version>2.3.28</freemarker.version>
   </properties>
 
   <dependencies>
