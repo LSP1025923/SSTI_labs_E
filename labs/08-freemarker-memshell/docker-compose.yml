@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ctf/freemarker-memshell:latest
-    container_name: freemarker-memshell
+    image: ssti-freemarker-memshell:local
+    container_name: ssti-08-freemarker-memshell
     ports:
       - "${FREEMARKER_MEMSHELL_PORT:-8098}:8080"
     environment:

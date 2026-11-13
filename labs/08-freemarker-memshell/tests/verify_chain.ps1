@@ -7,8 +7,8 @@
 # =============================================================================
 param(
   [string]$Port = "8098",
-  [string]$Image = "ctf/freemarker-memshell:latest",
-  [string]$Container = "freemarker-memshell"
+  [string]$Image = "ssti-freemarker-memshell:local",
+  [string]$Container = "ssti-08-freemarker-memshell"
 )
 function Line($t) { Write-Host ""; Write-Host "===== $t =====" }
 $base = "http://127.0.0.1:$Port"
@@ -42,15 +42,20 @@ foreach ($p in @('/flag', '/flag-readout', '/api/flag')) {
   $x = Req "$base$p"; Write-Host "$p -> $($x.status)"
 }
 
-Line "6. egress really blocked, inbound published port still alive"
+Line "6. egress: rules + packet counters"
 docker exec $Container iptables -S OUTPUT
-Write-Host "--- 6a. outbound TCP 1.1.1.1:80 (wget, 5s timeout) ---"
+Write-Host "--- 6a. counters before ---"
+docker exec $Container iptables -L OUTPUT -v -n --line-numbers
+Write-Host "--- 6b. outbound TCP 1.1.1.1:80 (wget, 5s timeout) ---"
 docker exec $Container sh -c 'wget -T 5 -q -O- http://1.1.1.1/ ; echo "wget exit=$?"'
-Write-Host "--- 6b. outbound TCP 93.184.216.34:80 ---"
-docker exec $Container sh -c 'wget -T 5 -q -O- http://93.184.216.34/ ; echo "wget exit=$?"'
-Write-Host "--- 6c. DNS ---"
-docker exec $Container sh -c 'nslookup example.com 2>&1; echo "nslookup exit=$?"'
-Write-Host "--- 6d. inbound published port ---"
+Write-Host "--- 6c. direct external resolver: nslookup example.com 8.8.8.8 ---"
+docker exec $Container sh -c 'nslookup example.com 8.8.8.8 2>&1; echo "nslookup exit=$?"'
+Write-Host "--- 6d. counters after (rule 1 and 2 must have grown) ---"
+docker exec $Container iptables -L OUTPUT -v -n --line-numbers
+Write-Host "--- 6e. Docker embedded resolver (127.0.0.11) - measured, still works on this platform ---"
+docker exec $Container sh -c 'nslookup example.com 2>&1 | tail -3'
+Write-Host "--- 6f. loopback app + inbound published port still fine ---"
+docker exec $Container sh -c 'wget -q -O- http://127.0.0.1:8080/healthz; echo " <- container -> lo:8080"'
 $r = Req "$base/healthz"; Write-Host "host -> $base/healthz : HTTP $($r.status) $($r.body)"
 
 Line "7. L1 - FreeMarker SSTI present"

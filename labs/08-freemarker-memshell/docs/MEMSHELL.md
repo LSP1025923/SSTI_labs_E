@@ -41,7 +41,7 @@ public static final String MEMSHELL_CLASS_B64 = "yv66vgAAADQ...";
 
 生成方式：`build-memshell.ps1` 用 JDK8 编译 `MemshellFilter.java`
 （`-source 1.8 -target 1.8`，校验 `major version: 52`），base64 后：
-一份写入 `src/main/resources/memshell/MemshellFilter.class.b64`（方便核对），
+一份写入 `../src/main/resources/memshell/MemshellFilter.class.b64`（方便核对），
 一份回填到 `InjectHelper.MEMSHELL_CLASS_B64`。
 
 > 字节码版本必须 ≤ 运行 JDK。运行镜像是 JDK8，所以编译目标必须是 1.8；
@@ -95,6 +95,69 @@ context.filterStart();             // 重建 filter chain，下一次请求立�
 
 实测 `addFilterMap` 返回 `true`、`filterStart()` 返回 `true`，
 随后 `GET /memshell?cmd=id` 立刻可用（**不需要重启、不需要重新部署**）。
+
+## 2.1.1 出网封锁的实测边界
+
+本靶场用三条 `iptables` 规则切断出网（`entrypoint.sh`）：
+
+```sh
+iptables -A OUTPUT ! -o lo -p tcp --syn -j DROP   # 非环回的新建 TCP 连接
+iptables -A OUTPUT -p udp --dport 53 -j DROP      # DNS over UDP
+iptables -A OUTPUT -p tcp --dport 53 -j DROP      # DNS over TCP
+```
+
+### 为什么不能写 `-o eth0`
+
+早期版本照搬的是 `-o eth0` 形式，有两个真实缺陷（本机实测确认）：
+
+1. **接口名不保证是 `eth0`**：compose 自定义网络、CNI、IPv6-only 等场景都可能不同，
+   写死接口名会导致「规则装上了但根本不匹配」的静默失效——比报错更危险。
+2. **Docker 内嵌 DNS 解析器在 `127.0.0.11`，走环回**：
+   `-o eth0 -p udp --dport 53` 永远匹配不到它。
+   实测：装好规则后 `nslookup example.com` **仍然成功**，而该规则的**包计数器一直为 0**。
+
+改成 `! -o lo`（而不是无条件全丢）是刻意的：**环回必须保持通畅**，
+否则容器内自检 `curl 127.0.0.1:8080`、compose 的 healthcheck 全部会失效。
+
+### 用包计数器说话（本机 Docker Desktop for Windows / WSL2，x86_64）
+
+```text
+# 规则本身
+-P OUTPUT ACCEPT
+-A OUTPUT ! -o lo -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -j DROP
+-A OUTPUT -p udp -m udp --dport 53 -j DROP
+-A OUTPUT -p tcp -m tcp --dport 53 -j DROP
+
+# 出向 TCP 尝试之后
+num  pkts bytes target prot opt in  out     ...
+1       5   300 DROP   tcp  --  *   !lo     tcp flags:0x17/0x02     <- 计数增长 = 规则真的在拦
+2       0     0 DROP   udp  --  *   *       udp dpt:53
+3       0     0 DROP   tcp  --  *   *       tcp dpt:53
+
+# 直连外部解析器之后
+2       1    57 DROP   udp  --  *   *       udp dpt:53             <- 计数增长
+```
+
+| 检查 | 结果 |
+|------|------|
+| 出向 TCP 到公网 IP | **已阻断**（`download timed out`，规则 #1 计数 5） |
+| 直连外部解析器 `nslookup example.com 8.8.8.8` | **已阻断**（`Operation not permitted`，规则 #2 计数 1） |
+| 走 Docker 内嵌 resolver（`127.0.0.11`） | **仍然可用**（规则 #2/#3 计数保持 0） |
+| 入向已发布端口 | 正常（宿主 `GET /healthz` → 200） |
+| 容器内 → `127.0.0.1:8080` | 正常（环回未被封） |
+
+**诚实结论**：
+
+- 反弹 shell、外连下载 payload —— **两类平台都阻断**，这是本靶场的教学前提，实测成立；
+- 直连外部 DNS —— 已阻断；
+- 但 **Docker Desktop（WSL2）上走内嵌 resolver 的域名解析不受容器 netfilter 管辖**，
+  因此在该平台**不能宣称「DNSLog 式外带被完全排除」**。
+  原生 Linux Docker 上 DNS 规则才真正作用在容器 netfilter 内，
+  换平台必须用同样的计数器方法重新验证，不要照搬结论。
+
+> 对教学的影响：本靶场要教的是「不出网时只能走内存马」。
+> 出向 TCP 被阻断这一点已经足以让反弹 shell / 下载 payload 失效，
+> 核心结论不受影响；但 DNSLog 能否用取决于部署平台，请如实告知学员。
 
 ## 3. 实测踩到的三个版本坑
 

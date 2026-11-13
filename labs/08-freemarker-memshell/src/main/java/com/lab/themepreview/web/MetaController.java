@@ -33,22 +33,29 @@ public class MetaController {
         m.put("description",
                 "「ThemeHub」主题预览服务把运营提交的 FreeMarker 模板片段直接渲染，"
               + "并且为了让模板能调用任意工具类，把类解析器配成了 UNRESTRICTED，"
-              + "于是 ${...?new(...)} 一路走到任意 Java 代码执行；同一站点还留了一个 "
-              + "Thymeleaf 视图名注入（__${...}__ 预处理 → SpEL）作为第二条 RCE 路径。"
+              + "于是 ${...?new(...)} 一路走到任意 Java 代码执行。"
+              + "同一站点还暴露了一个 Thymeleaf 视图名/片段名注入面（GET /theme/thymeleaf）——"
+              + "注意它是**刻意保留的对照案例**：实测在 Thymeleaf 3.0.x（含 3.0.15 与 3.0.11）上"
+              + "模板名本身不是 SpEL 求值点，注入面存在但默认打不到 RCE，"
+              + "细节与原始证据见 README「Thymeleaf 这条路的实测边界」。"
               + "容器已用 iptables 切断出网（仅放行入向响应），所以出网反弹不可用，"
               + "需要把 Filter 动态注册进运行中的 Tomcat StandardContext，"
               + "得到一个只在内存里存在、可复用的 webshell。");
         m.put("no_egress", true);
         m.put("no_egress_note",
-                "容器已禁止出网：反弹 shell / DNSLog / 任何主动外连均不可用"
-              + "（iptables 丢弃 eth0 上的出向 TCP SYN 与 UDP/53，入向响应不受影响）。"
-              + "必须用内存马（或回显/写文件）通过已有的入向 HTTP 通道拿数据。");
+                "容器已切断出向 TCP：反弹 shell / 外连下载 payload 均不可用"
+              + "（iptables 丢弃非环回的新建 TCP 连接，并丢弃 UDP/TCP 53 的 DNS；入向响应不受影响）。"
+              + "必须用内存马（或回显/写文件）通过已有的入向 HTTP 通道拿数据。"
+              + "注意：在 Docker Desktop(WSL2) 上，走 Docker 内嵌 resolver(127.0.0.11) 的域名解析"
+              + "可能仍然可用（不经过容器 netfilter），DNSLog 能否用请以实际平台自测为准。");
         m.put("flag_path", "/flag");
         m.put("flag_format", "flag{...}");
         m.put("doc_url", "/docs/lab.md");
         m.put("hint",
                 "预览接口 /theme/preview 的模板串是可控的：先确定引擎。"
-              + "FreeMarker 试 ${7*7}，Thymeleaf 试 __${7*7}__。"
+              + "FreeMarker 试 ${7*7}（会求值）。"
+              + "另有 Thymeleaf 入口 /theme/thymeleaf，但注意它**在本技术栈上不求值**"
+              + "——那是刻意保留的对照案例，不要在这里浪费时间，见 README 的实测边界。"
               + "注意容器不允许外连，任何要连出去的 payload 都不会有回显。");
         m.put("theme", theme());
         m.put("engines", engines());
@@ -123,7 +130,8 @@ public class MetaController {
         list.add(ep("GET", "/healthz", "健康检查，返回 ok"));
         list.add(ep("GET", "/api/lab-info", "本靶场元信息（本接口）"));
         list.add(ep("GET", "/theme/preview?template=<ftl>&theme=<name>", "漏洞点 1：FreeMarker 模板串渲染（类解析器 UNRESTRICTED）"));
-        list.add(ep("GET", "/theme/thymeleaf?theme=<v>", "漏洞点 2：Thymeleaf 视图名注入（__${...}__ → SpEL）"));
+        list.add(ep("GET", "/theme/thymeleaf?theme=<v>",
+                "对照入口：Thymeleaf 视图名/片段名注入面（实测在本栈上不求值，不可达 RCE）"));
         list.add(ep("GET", "/api/theme-vars", "预览接口的数据模型说明"));
         list.add(ep("GET", "/api/memshell-class", "把内嵌的 memshell Filter 字节码（base64）吐出来，便于核对 payload"));
         return list;

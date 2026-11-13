@@ -137,7 +137,7 @@ ${"freemarker.template.utility.JythonRuntime"?new()}    # 需要 jython 在 clas
 ```text
 GET /theme/thymeleaf?theme=aurora                     → 200，渲染 templates/theme/aurora.html
 GET /theme/thymeleaf?theme=<任意内容>                  → 视图名 = "theme/" + 用户输入
-GET /theme/thymeleaf?theme=aurora&fragment=header     → 200，包含 fragments/header.html 的 body 片段
+GET /theme/thymeleaf?theme=aurora&fragment=header     → 200（fragment 参数仍被接收，当前模板未使用它）
 ```
 
 ### 3.2 经典（CVE-2021-25741 时代）payload
@@ -158,9 +158,15 @@ GET /theme/thymeleaf?theme=aurora&fragment=header     → 200，包含 fragments
 | `theme=aurora` | `200`，正常渲染 |
 | `theme=__${7*7}__` | `500`，`Error resolving template [theme/__${7*7}__]` ← 原样 |
 | `theme=__${100+1}__` | `500`，`resolved=[theme/__${100+1}__]` ← 原样 |
-| `fragment=header` | `200`，片段被包含 |
-| `fragment=__${7*7}__` | `500`，`resolved=[fragments/__${7*7}__]` ← 原样 |
-| `fragment=__${'hea'.concat('der')}__` | `500`，仍是字面量（若求值应为 `header` → 200） |
+| `fragment=header` | `200`（模板当前的固定片段正常包含） |
+| `fragment=__${7*7}__` | 该参数当前没被模板使用；单独用 `~{fragments/${userTheme} :: body}` 测时，报 `Error resolving template [fragments/${userTheme}]` |
+| `fragment=__${'hea'.concat('der')}__` | 仍是字面量（若求值应为 `header` → 200） |
+
+另外发现一个**真实且常见的误用**：Thymeleaf 的片段选择器 `~{...}` **内部不对 `${...}` 做插值**。
+写 `th:replace="~{fragments/${userTheme} :: body}"` 时，Thymeleaf 会把 `${userTheme}`
+一起当字面量模板名去解析（报 `Error resolving template [fragments/${userTheme}]`）。
+本靶场因此把主题页改成固定片段 `~{fragments/header :: body}`，保证默认页面是好的，
+并把这件事写进模板注释当教学点。
 
 也就是说：**「用户可控的模板名/片段名」本身并不构成 SpEL 注入点**，
 很多网文把这两件事混为一谈。真正的求值点在模板**内部**的 `th:*` 表达式上。
