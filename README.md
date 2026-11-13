@@ -308,14 +308,28 @@ docker compose -f docker-compose.prod.yml --profile java up -d   # 含 08
 
 ---
 
-## 已知问题（发现但未改，按要求只记录）
+## 已知问题与边界
 
-| # | 文件 | 问题 |
+### 已修复（曾记录在此，留痕以免重复排查）
+
+| # | 位置 | 问题 | 现状 |
+|---|------|------|------|
+| 1 | `labs/08-freemarker-memshell/docker-compose.yml` | 单靶场 compose 默认端口曾是旧的 `8088`（`MEM_LAB_PORT`），与根 compose 的 **8098** 不一致 | ✅ 已统一为 `${FREEMARKER_MEMSHELL_PORT:-8098}`，镜像名也改为 `ssti-freemarker-memshell:local` |
+| 2 | `labs/02-jinja-chain/README.md` | README 声称大量 ✅ payload 由 `verify_labs.py` 断言，但该脚本只覆盖 6 条 | ✅ `verify_labs.py` 对 02 已扩到 **23 条探针**，覆盖 id 0–8、10 的成功与拦截 |
+| 3 | `labs/05-jinja-sandbox/`、`labs/06-blind-ssti/` | 只有脚手架没有 `app.py` | ✅ 两个靶场均已实现并验证（4 关 + 4 关） |
+
+### 仍然存在
+
+| # | 位置 | 问题 |
 |---|------|------|
-| 1 | `labs/08-freemarker-memshell/docker-compose.yml:9` | 单靶场 compose 默认端口仍是旧的 `8088`（`MEM_LAB_PORT`），与根 compose / `scripts/up-all.sh` / 本文档统一的 **8098** 不一致（`FREEMARKER_MEMSHELL_PORT`）。用它单独起靶场会落在 8088。 |
-| 2 | `labs/02-jinja-chain/README.md:44` | 写的是「下面标注 ✅ 已验证的 payload 由 `scripts/verify_labs.py` 实际跑过并断言了输出」，但该 README 里大量 ✅ 标记的关卡（例如 L4/L5/L6/L8 的链条）**并不在** `scripts/verify_labs.py` 的探针集合里（该脚本对 02 只断言 id 0/1/3/4 的 6 条 + 1 条经典链）。要么补探针，要么修正 README 的措辞。 |
-| 3 | `labs/05-jinja-sandbox/`、`labs/06-blind-ssti/` | 只有脚手架，没有 `app.py`。根 compose 与 `scripts/build-all.sh` 都会尝试构建/启动它们。公共库侧的渲染器（`jinja_sandbox`）与 `echo_mode` 已就绪，缺的是关卡定义 + `app.py`。 |
-| 4 | `shared/ssti_core/engines/__init__.py` | `bottle` 渲染器已登记（`REQUIRED_PACKAGES`）但**没有任何关卡使用它**，且它的 pip 包不在任何 `requirements.txt` 里。属于「预留引擎」。 |
+| 4 | `shared/ssti_core/engines/__init__.py` | `bottle` 渲染器已登记但**没有任何关卡使用**，其 pip 包也不在任何 `requirements.txt` 里 —— 属于预留引擎，要么补关卡，要么删掉 |
+| 5 | **链式靶场有 9 关没有已证明的解** | `02` id 11/12、`03` id 10/11/12、`04` id 1/10/11/12。其中 **`04` id 1 属于设计缺陷**（Tornado 只有 `{{ }}` 一种输出构造，拦掉它就等于没有回显通道），其余是刻意的高压过滤。完整矩阵、成因与三种处理方案见 [`docs/SOLVABILITY.md`](docs/SOLVABILITY.md) |
+| 6 | 出网切断的 DNS 部分**平台相关** | 在 Docker Desktop(WSL2) 上，Docker 内嵌解析器（`127.0.0.11`）的 DNS **不经过容器 netfilter**（实测 iptables 规则计数为 0，解析照常成功）。该平台上「不出网」只等于「TCP 出不去」；原生 Linux 上两条 DNS 规则才会命中，请在目标平台自行复验。见 [`docs/MEMSHELL.md`](docs/MEMSHELL.md) 2.1.1 |
+| 7 | `labs/08-freemarker-memshell` 的 Thymeleaf 入口 | **不是 RCE**（Thymeleaf 3.0.15 与 3.0.11 均实测模板名不求值）。作为刻意保留的**对照案例**，题面与 README 都已如实标注；想让它真能打通，需要让某个模板把用户输入拼进 Thymeleaf **表达式源码**（而非模板名） |
+
+> 可解性的**实测矩阵**是这套仓库里最该看的一张表：
+> [`docs/SOLVABILITY.md`](docs/SOLVABILITY.md)。它由 `tests/audit_solvability.py`
+> 逐关实打生成 —— 出题前请看它，别把「可能有解」当成「有解」。
 
 ---
 

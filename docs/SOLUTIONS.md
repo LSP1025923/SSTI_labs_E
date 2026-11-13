@@ -16,7 +16,7 @@
 | 靶场 | 题解 | 一句话 |
 |------|------|--------|
 | 01-jinja-waf-fenjing | [`labs/01-jinja-waf-fenjing/README.md`](../labs/01-jinja-waf-fenjing/README.md) | 关键词表 WAF；Fenjing 工具路线 + `~` 拼接手搓路线，均 ✅ |
-| 02-jinja-chain | [`labs/02-jinja-chain/README.md`](../labs/02-jinja-chain/README.md) | Jinja2 13 关链；L1–L10 有解，L12/L13 为刻意硬关 |
+| 02-jinja-chain | [`labs/02-jinja-chain/README.md`](../labs/02-jinja-chain/README.md) | Jinja2 13 关链；**id 0–10 已实测可解**，id 11/12 未找到解（见 [`SOLVABILITY.md`](SOLVABILITY.md)） |
 | 03-mako-chain | [`labs/03-mako-chain/README.md`](../labs/03-mako-chain/README.md) | Mako 13 关；id 0–10 已实测，id 10/11/12 为硬关（仅确认语法面） |
 | 04-tornado-chain | [`labs/04-tornado-chain/README.md`](../labs/04-tornado-chain/README.md) | Tornado 13 关；id 0、3–9 已实测，id 1/10/11/12 无短解 |
 | 05-jinja-sandbox | （**待补**：只有脚手架，没有 `app.py`） | 沙箱逃逸，渲染器已就绪 |
@@ -106,23 +106,37 @@ lab 02/03/04 的 L8 与 L13 共用同一张表：
 
 ---
 
-## 4. 公开硬关清单（刻意无短解）
+## 4. 公开硬关清单（当前无短解）
 
-这些关卡当前**没有已验证的短解**，是刻意设计的难度上限，
-不是文档缺口。若要让它们「必有短解」，需要放宽对应的 `WafSpec`：
+> 📊 **完整的「每关都有解吗」实测矩阵、成因分析与三种处理方案，
+> 见 [`SOLVABILITY.md`](SOLVABILITY.md)。** 那一份是用
+> `tests/audit_solvability.py` 逐关实打出来的，本节只是摘要。
+
+这些关卡当前**没有已验证的短解**。请注意区分两类情况：
+
+- **属于设计缺陷的一类**：`04-tornado-chain` id 1。Tornado 模板**只有 `{{ }}` 一种输出
+  构造**，拦掉它等于拿掉回显通道 —— 选手再能执行也带不出结果。**建议改掉这一关的过滤
+  目标**（见 `SOLVABILITY.md` 2.1 的三种改法）。
+- **属于难度上限的一类**：其余 8 关是把「造字符串所需通道」层层收紧的结果，
+  是刻意设计，但作为出题方不应把「可能有解」当成「有解」交付。
+
+若要让它们「必有短解」，需要放宽对应的 `WafSpec`：
 
 | 靶场 | 关卡 | 现有过滤 | 已知可用面 |
 |------|------|----------|-----------|
-| 03-mako-chain | id 10 | `' " + . [ ]` + `request` | `chr` 内置名、函数调用、模块块 |
+| 02-jinja-chain | id 11 | `' " + . [ ]` + `request` | ✅ **已找到解**：`dict(kw=1)\|first` 造串 + `chr()` 拼命令，见 `SOLVABILITY.md` 2.2 |
+| 02-jinja-chain | id 12 | 再加 `_` 与数字、`\` | 无下划线 ⇒ 写不出 `__globals__`；无数字 ⇒ `chr(95)` 也造不出下划线 |
+| 02-jinja-chain | id 13 | 符号 + `request/class/init/arg/config/app/self` | 连 `+`（拼接）都没有 |
+| 03-mako-chain | id 10 | `' " + . [ ]` + `request` | `chr` 内置名、函数调用、模块块；但 `getattr` 需要 str 名字，而造 str 需要 `+`/`'`/`.`（全被禁） |
 | 03-mako-chain | id 11 | 再加 `_` 与数字、`\` | `<%! %>` 模块块（`<%!import os%>` 实测不报错） |
-| 03-mako-chain | id 12 | 符号 + `request/class/init/arg/config/app/self` | **`<%!import os%>${os}` 实测通过** ✅ |
-| 04-tornado-chain | id 1 | 子串 `{{` | 语句块可执行但无回显通道 |
+| 03-mako-chain | id 12 | 符号 + `request/class/init/arg/config/app/self` | **`<%!import os%>${os}` 实测通过** ✅（但取不出 flag） |
+| 04-tornado-chain | id 1 | 子串 `{{` | ⚠️ 语句块可执行但**无回显通道** ⇒ 设计缺陷 |
 | 04-tornado-chain | id 10 | `' " + . [ ]` + `request` | `escape` / `handler` 起点仍在 |
 | 04-tornado-chain | id 11 | 再加 `_` 与数字、`\` | `{% import %}` 语句本身可通过 |
 | 04-tornado-chain | id 12 | 符号 + 扩展关键字 | `{{7*7}}`、`{{True}}`、`{{escape}}`、`{% import subprocess %}` 均可用 |
 
 改动过滤后请同步改：`shared/ssti_core/levels/<engine>.py`、该靶场 `README.md` 的关卡表、
-`scripts/verify_labs.py` 的探针。
+`scripts/verify_labs.py` 的探针，并重跑 `tests/audit_solvability.py` 确认新的矩阵。
 
 ---
 

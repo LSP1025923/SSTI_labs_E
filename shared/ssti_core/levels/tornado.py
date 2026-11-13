@@ -42,9 +42,17 @@ def L02() -> Level:
         engine=ENGINE,
         title="L2 - 拦截 {{",
         summary="双花括号被整段替换为 WAF",
-        description="只要出现 `{{` 整段就被替换成 `WAF`；`{% %}` 语句块没有拦。",
+        description=(
+            "只要出现 `{{` 整段就被替换成 `WAF`。\n"
+            "⚠️ **本关目前没有回显通道**：Tornado 模板只有 `{{ ... }}` 一种输出构造，"
+            "`{% ... %}` 语句块会执行但**不产生任何输出**。所以这一关在当前规则下"
+            "拿不到 `/flag`，是设计上的缺陷而非难度问题 —— 详见 "
+            "`docs/SOLVABILITY.md` 第 2.1 节（含三种改法）。\n"
+            "如果你是出题人，请按那份文档改掉本关的过滤目标再发布；"
+            "如果你是选手，跳过本关即可，不要在这里空耗。"
+        ),
         waf=WafSpec(substrings=("{{",), ignore_case=False, note="出现 `{{` 即整段替换为 `WAF`。"),
-        hint="`{% import %}`、`{% set %}`、`{% if %}` 都是语句块。",
+        hint="（本关无解，见题面说明与 docs/SOLVABILITY.md。）",
     )
 
 
