@@ -5,7 +5,7 @@
 | 端口 | `8097`（`FLASK_MEMSHELL_PORT` 可改） |
 | 引擎 | Jinja2（Flask `render_template_string`） |
 | 关卡数 | 5（攻击链 walkthrough） |
-| **出网** | **已切断**（iptables 丢弃新建外部连接与 DNS，入站端口不受影响） |
+| **出网** | **已切断**（iptables 丢弃非环回的新建 TCP 连接与 DNS，入站端口不受影响） |
 | 需要权限 | `cap_add: [NET_ADMIN]`（否则出网切不断，容器会告警但照常启动） |
 | flag | 容器内 `/flag`，由环境变量写入，不进镜像层 |
 
@@ -14,8 +14,9 @@
 **当目标不能出网时，SSTI 应该怎么打。**
 
 传统打法是反弹 shell：让目标主动连回你的 VPS。但在容器/内网环境里经常根本
-没有出网（本靶场的 `entrypoint.sh` 会 `iptables -A OUTPUT -o eth0 -p tcp --syn -j DROP`
-并丢弃 DNS），于是反弹 shell、DNSLog 外带、外连下载**全部失效**。
+没有出网（本靶场的 `entrypoint.sh` 会 `iptables -A OUTPUT ! -o lo -p tcp --syn -j DROP`
+并丢弃所有 DNS），于是反弹 shell、外连下载**全部失效**（DNSLog 在 Docker Desktop
+这类平台上仍可能可用，见下文「出网是怎么被切断的」的平台差异说明）。
 
 内存马走的是反向思路：不要求目标出网，而是把能力挂到**已经存在的入站 HTTP 通道**上。
 对 Flask 来说就是直接改运行中进程的内部数据结构，注册出一条新路由、或一个
@@ -145,24 +146,40 @@ curl -s localhost:8097/profile -H 'X-M: 1' -H 'X-C: cat /flag'
 `entrypoint.sh`（容器内以 root 启动时执行）：
 
 ```sh
-iptables -A OUTPUT -o eth0 -p tcp --syn -j DROP     # 丢弃新建的对外 TCP 连接
-iptables -A OUTPUT -o eth0 -p udp --dport 53 -j DROP # 丢弃 DNS 查询
+iptables -A OUTPUT ! -o lo -p tcp --syn -j DROP   # 丢弃所有「非环回」的新建 TCP 连接
+iptables -A OUTPUT -p udp --dport 53 -j DROP      # 丢弃所有接口上的 DNS（UDP）
+iptables -A OUTPUT -p tcp --dport 53 -j DROP      # DNS over TCP 一并丢
 ```
 
 为什么这样写：
 
 - 只丢 **`--syn`**：宿主机映射进来的入站连接的**回包**不是 SYN，所以入站端口照常工作；
   而容器主动发起的对外连接第一个包就是 SYN，会被丢掉。
-- 丢 DNS 是必要的补刀：只丢 TCP 的话仍可能用 UDP DNS 外带。
+- 用 **`! -o lo`** 而不是 `-o eth0`：接口名不保证叫 `eth0`，写死会在某些网络下失效。
+  同时必须**放行环回** —— 本靶场的 `tests/verify_memshell.py` 是在容器内打
+  `127.0.0.1:5000` 验证整条链的，封了环回就没法自证。
+- DNS 规则**不加 `-o` 限定**：Docker 的内嵌解析器在 `127.0.0.11`，走的是环回，
+  只写 `-o eth0` 会完全漏掉它。
 - `iptables` 不可用或没有 `NET_ADMIN` 时，entrypoint **只告警不退出**——
   靶场不能因为加固失败而起不来。此时 `/api/lab-info` 里的 `no_egress` 仍会显示为真
   （它来自环境变量 `SSTI_NO_EGRESS`），日志里会有 `[!]` 提示，请以日志为准。
 
-自证命令（在容器内执行，两条都应失败）：
+⚠️ **平台差异（必须知道）**：上面的 DNS 规则在 **原生 Linux Docker** 上生效，但在
+**Docker Desktop for Windows/macOS（WSL2/VM）** 上，容器发往 `127.0.0.11` 的 DNS 请求
+**不经过容器自己的 netfilter**（实测：规则计数为 0，而解析依然成功）。
+所以在这类环境里「外连 TCP 已断，DNS 仍可解析」。
+**反弹 shell 与外连下载在两种环境下都是断的**；完整说明与复验方法见
+[`docs/MEMSHELL.md`](../../docs/MEMSHELL.md) 的 2.1.1 节。
+
+自证命令（在容器内执行）：
 
 ```bash
-docker exec ssti-flask-memshell python -c "import socket; socket.create_connection(('93.184.216.34',80),timeout=5)"
-docker exec ssti-flask-memshell python -c "import socket; socket.gethostbyname('example.com')"
+# 1) 对外 TCP：应失败
+docker exec ssti-07-flask-memshell python -c "import socket; socket.create_connection(('93.184.216.34',80),timeout=5)"
+# 2) 直连外部 DNS：应失败
+docker exec ssti-07-flask-memshell python -c "import socket; socket.gethostbyname('example.com')"   # 视平台而定
+# 3) 环回：必须成功（验证脚本依赖）
+docker exec ssti-07-flask-memshell python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:5000/healthz',timeout=5).status)"
 ```
 
 ## 运行
@@ -219,7 +236,9 @@ docker exec ssti-flask-memshell python /tmp/v.py
 
 === 6. 不出网自证 ===
   ok   对外 TCP 被阻断   (TimeoutError)
-  ok   DNS 被阻断        (gaierror)
+  ok   直连外部 DNS 被阻断 (PermissionError)     # dig @8.8.8.8 亦超时
+  # 注意：经 Docker 内嵌解析器（127.0.0.11）的解析在 Docker Desktop 上仍可用，
+  #       原因与复验见 docs/MEMSHELL.md 2.1.1；原生 Linux 上该路径被规则丢弃。
 
 共 23 项，失败 0 项
 ```

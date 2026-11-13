@@ -35,10 +35,13 @@ echo "[*] /flag written ($(wc -c < /flag) bytes)"
 #    -A OUTPUT -o eth0 -p tcp --syn -j DROP
 #       只丢“新建连接”的 SYN 包；回给入向请求的响应包不是 SYN，照常发出，
 #       所以 docker -p 发布的端口仍然可用，反弹 shell / 外连打点全部失效。
+#    -A OUTPUT -p udp --dport 53 -j DROP
+#       断掉 DNS（在 Docker 里这很重要：内嵌 DNS 是 127.0.0.11，
+#       流量走 lo 而不走 eth0，所以必须【不加 -o 限制】才能真的拦住 DNSLog）。
 #    -A OUTPUT -o eth0 -p udp --dport 53 -j DROP
-#       顺带断掉 DNS，DNSLog 也一并不可用。
+#       再补一条显式规则，便于 iptables -S 一眼看出出网策略（与上一条冗余但无害）。
 #
-#    这两条规则在 Docker Desktop (WSL2, x86_64) 上实测有效，见 README 的验收记录。
+#    这几条规则在 Docker Desktop (WSL2, x86_64) 上实测有效，见 README 的验收记录。
 #    best-effort：没有 iptables / 没有 NET_ADMIN 时大声告警但继续启动，
 #    不能让靶场因为封锁失败就起不来。
 # ---------------------------------------------------------------------------
@@ -52,8 +55,9 @@ done
 
 if [ -n "$IPT" ]; then
   if $IPT -A OUTPUT -o eth0 -p tcp --syn -j DROP 2>/dev/null \
+     && $IPT -A OUTPUT -p udp --dport 53 -j DROP 2>/dev/null \
      && $IPT -A OUTPUT -o eth0 -p udp --dport 53 -j DROP 2>/dev/null; then
-    echo "[*] no-egress: outbound TCP SYN + UDP/53 on eth0 DROPPED"
+    echo "[*] no-egress: outbound TCP SYN + DNS(UDP/53) DROPPED"
     $IPT -S OUTPUT 2>/dev/null || true
   else
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"

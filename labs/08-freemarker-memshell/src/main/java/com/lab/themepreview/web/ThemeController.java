@@ -66,15 +66,16 @@ public class ThemeController {
     //     GET /theme/thymeleaf?theme=aurora      -> 渲染 templates/theme/aurora.html
     //     GET /theme/thymeleaf?theme=<任意内容>   -> 视图名被原样拼接，无白名单
     //
-    // 同时，主题页 theme/aurora.html 里还有一个动态片段选择：
-    //     <div th:replace="~{fragments/${userTheme} :: body}">
-    // fragment 参数会进入 Thymeleaf 的片段表达式解析。
+    // fragment 参数是历史遗留（早期版本的主题页用它动态选片段）；
+    // 现在的主题页用固定片段 th:replace="~{fragments/header :: body}"，
+    // 但请求参数仍然照收不误，方便对照实验。
     //
     // ⚠ 实测结论（见 docs/PAYLOADS.md 与 README「Thymeleaf 这条路的实测边界」）：
     //   在 Thymeleaf 3.0.15（Boot 2.7.18 默认）以及 3.0.11 上，
     //   视图名【不会】做 __${...}__ 预处理、片段名【不会】被当作 SpEL 求值
-    //   （报错信息里模板名始终是原样的 theme/__${7*7}__），
-    //   也就是说：可控的「模板名」本身并不构成 SpEL 注入点（这一点和不少网文说法相反）。
+    //   （报错信息里模板名始终原样，例如 theme/__${7*7}__），
+    //   甚至 Thymeleaf 的片段选择器 ~{...} 内部也不会对 ${...} 做插值。
+    //   也就是说：可控的「模板名/片段名」本身不构成 SpEL 注入点（和不少网文说法相反）。
     //   这条入口因此是「存在注入面但默认不可达 RCE」的对照题；
     //   本靶场真正能打通到 RCE 的是 FreeMarker 那条链。
     // ------------------------------------------------------------------

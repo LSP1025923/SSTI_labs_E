@@ -15,12 +15,13 @@ import org.springframework.context.annotation.Bean;
  *
  * FreeMarker 默认的 TemplateClassResolver 只放行
  *   freemarker.template.utility.ObjectConstructor / JythonRuntime / Execute
- * 三个白名单类（新版还进一步收紧）；UNRESTRICTED_RESOLVER 则允许 ?new() 解析
- * <b>任意</b>类 —— 等于把「写模板的人」当成「能在 JVM 里执行代码的人」。
+ * 三个白名单类（新版还进一步收紧）；UNRESTRICTED_RESOLVER 则允许 ?new() 去解析
+ * <b>任意</b>类名 —— 等于把「写模板的人」当成「能在 JVM 里执行代码的人」。
  *
- * 配合 freemarker 2.3.28（还带着 freemarker.template.utility.Execute），
- * 就得到最经典的 FreeMarker SSTI RCE：
- *   ${"freemarker.template.utility.Execute"?new()("id")}
+ * 注意 ?new 还有第二道限制：目标类必须实现 freemarker.template.TemplateModel。
+ * 所以本靶场能直接用的是 freemarker.template.utility.Execute（它实现了
+ * TemplateMethodModel）：${"freemarker.template.utility.Execute"?new()("id")}。
+ * 想构造 Runtime/ProcessBuilder 这类普通类，得走 ObjectConstructor。
  */
 @org.springframework.context.annotation.Configuration
 public class FreemarkerConfig {

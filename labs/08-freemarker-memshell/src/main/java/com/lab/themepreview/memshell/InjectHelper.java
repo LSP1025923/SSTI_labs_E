@@ -27,9 +27,15 @@ import java.util.List;
  *   3. addFilterDef + addFilterMap + filterStart，把 /memshell 注册进运行中的容器。
  *
  * 实现了 FreeMarker 的 {@link TemplateMethodModelEx}（核心接口，2.x 全版本都还在，
- * 不像 freemarker.template.ObjectConstructor 在 2.3.29 被删掉）：
- * ?new(servletContext) 会调构造器（注入在构造器里发生），构造出来的对象紧接着被 ()
- * 调用（exec 返回注入结果），于是注入结果直接回显在模板响应里。
+ * 不像 freemarker.template.ObjectConstructor 在 2.3.29 被删掉）。
+ *
+ * ★ 为什么必须实现它：FreeMarker 的 ?new 内建**只允许构造实现了
+ *   {@code freemarker.template.TemplateModel} 的类**（实测：
+ *   ${"java.lang.Runtime"?new()} 会直接抛
+ *   "Class java.lang.Runtime does not implement freemarker.template.TemplateModel"）。
+ *   实现 TemplateMethodModelEx 之后，?new(servletContext) 会调构造器
+ *   （注入在构造器里发生），构造出来的对象紧接着被 () 调用
+ *   （exec 返回注入结果），于是注入结果直接回显在模板响应里。
  *
  * 它没有被任何 Controller 引用 —— 只能通过 SSTI 到达。
  */

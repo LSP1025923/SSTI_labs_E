@@ -37,8 +37,9 @@ Tomcat 的 `StandardContext` 里的 `FilterDef` / `FilterMap`），
 `labs/*/entrypoint.sh`（由 `scripts/scaffold_lab.py` 生成；lab 07 实测生效）：
 
 ```sh
-iptables -A OUTPUT -o eth0 -p tcp --syn -j DROP       # 丢弃新建的对外 TCP 连接
-iptables -A OUTPUT -o eth0 -p udp --dport 53 -j DROP  # 丢弃 DNS 查询
+iptables -A OUTPUT ! -o lo -p tcp --syn -j DROP   # 丢弃所有「非环回」的新建 TCP 连接
+iptables -A OUTPUT -p udp --dport 53 -j DROP      # 丢弃所有接口上的 DNS（UDP）
+iptables -A OUTPUT -p tcp --dport 53 -j DROP      # DNS over TCP 一并丢
 ```
 
 配合 compose 里的：
@@ -48,8 +49,45 @@ cap_add:
   - NET_ADMIN        # 没有它 iptables 加不了规则
 ```
 
-lab 08（Java）的 `entrypoint.sh` 用同样的两条规则，并且额外 `unset GZCTF_FLAG DASFLAG FLAG STATIC_FLAG`
-—— 防止选手直接读环境变量拿 flag，逼你真的去打内存马。
+两处细节都是踩过坑才这么写的：
+
+* **`! -o lo` 而不是 `-o eth0`**：接口名不保证叫 `eth0`，按接口名写会在某些网络下
+  直接失效。真正的判据是「**不要**离开环回」。
+  同时环回必须放行 —— lab 07 的 `tests/verify_memshell.py` 是**在容器内**打
+  `127.0.0.1:5000` 验证整条链的，封了环回就没法自证。
+* **DNS 规则不加 `-o` 限定**：Docker 的内嵌解析器在 `127.0.0.11`，走**环回**；
+  只写 `-o eth0` 会完全漏掉它。
+
+lab 08（Java）的 `entrypoint.sh` 用同样的规则，并且额外
+`unset GZCTF_FLAG DASFLAG FLAG STATIC_FLAG` —— 防止选手直接读环境变量拿 flag，
+逼你真的去打内存马。
+
+### 2.1.1 ⚠️ 「出网到底断没断」——一个必须说清楚的平台差异
+
+上表在**原生 Linux Docker** 上成立，但在 **Docker Desktop for Windows / macOS
+（WSL2 / Linux VM）** 上有一个实测出来的漏洞：
+
+| 检测项 | 结果 | 说明 |
+|--------|------|------|
+| 容器主动外连 TCP（如 `93.184.216.34:80`） | ❌ 被阻断（`TimeoutError`） | 规则命中，计数增长 |
+| 直连**外部** DNS（如 `dig @8.8.8.8`） | ❌ 被阻断 | `udp dport 53` 规则命中 |
+| 经 **Docker 内嵌解析器**（`127.0.0.11`）解析域名 | ⚠️ **仍然成功** | **规则计数为 0 —— 这些包根本不经过容器的 netfilter** |
+| 入站已发布端口 | ✅ 正常 | 不受影响 |
+| 容器内环回自连（`127.0.0.1:5000`） | ✅ 正常 | 验证脚本依赖它 |
+
+也就是说：在 Docker Desktop 这类「解析器跑在容器 netns 之外」的环境里，
+**DNS 仍然可用，DNSLog 式外带理论上没有被挡住**。
+（`docs/KNOWLEDGE.md` 与旧版本文档里"DNS 被阻断"的说法只在原生 Linux 上成立。）
+
+怎么办：
+
+* **比赛/生产请用原生 Linux Docker**，并在部署后按上面的表格**自己复验一遍**
+  （脚本：`tests/verify_memshell.py` 的第 6 节会打印这两条自证结果）。
+* 不要试图用 compose 的 `dns:` 绕开 —— 实测在 Docker Desktop 上
+  `dns: ["127.0.0.1"]` 会被忽略，`/etc/resolv.conf` 依然是 `127.0.0.11`。
+* 这不影响本仓库的教学结论：**反弹 shell / 外连下载在两种环境下都是断的**，
+  而「无回显」才是逼你走内存马的主要原因（DNSLog 需要选手自己控制域名与权威 NS，
+  在离线教学环境里并不具备）。
 
 ### 2.2 为什么「入站还能用」而「出站不能用」
 
@@ -78,9 +116,15 @@ docker exec ssti-07-flask-memshell python -c "import socket; socket.gethostbynam
 本次验证观测（`labs/07-flask-memshell` 镜像，`--cap-add NET_ADMIN`）：
 
 ```text
+# 容器主动外连 TCP
 TCP blocked: TimeoutError
-DNS blocked: gaierror
-# 同时：GET http://127.0.0.1:19096/ → 200（入站正常）
+# 直连外部 DNS（8.8.8.8:53）
+External DNS blocked: PermissionError / timeout
+# 经 Docker 内嵌解析器（127.0.0.11）—— 视平台而定，见 2.1.1
+原生 Linux Docker : DNS blocked（gaierror）
+Docker Desktop     : ⚠️ 仍可解析（规则计数为 0，包不经过容器 netfilter）
+# 同时：GET http://127.0.0.1:<host-port>/ → 200（入站正常）
+# 容器内环回：http://127.0.0.1:5000/healthz → 200（验证脚本依赖）
 ```
 
 ### 2.3 出网被封后，各手法的死活
@@ -91,8 +135,8 @@ DNS blocked: gaierror
 | 写文件到 Web 目录 + HTTP 取回 | ✅ 可用 | 同上（lab 07 step3） |
 | 内存马 | ✅ 可用 | 同上（lab 07 step4、lab 08） |
 | 反弹 shell | ❌ | 目标主动外连，首包 SYN 被丢 |
-| DNSLog 外带 | ❌ | UDP/53 被丢 |
 | 外连下载 payload | ❌ | 同反弹 shell |
+| DNSLog 外带 | ⚠️ 平台相关 | 原生 Linux 上 UDP/53 被丢；**Docker Desktop 上内嵌解析器可绕过 netfilter**，见 2.1.1 |
 | 时间盲注 | ⚠️ 可用但慢 | 本地计算耗时不受出网影响 |
 
 **注意最后一行**：出网封锁**不**等于「无法带外」。
@@ -268,10 +312,12 @@ GET /  without X-M → 200, 站点正常
 
 ### 4.2 为什么它同样「必须做内存马」
 
-- **出网切断方式与 lab 07 完全一致**：`entrypoint.sh` 里
-  `iptables -A OUTPUT -o eth0 -p tcp --syn -j DROP` +
-  `-A OUTPUT -o eth0 -p udp --dport 53 -j DROP`，`cap_add: [NET_ADMIN]`。
-  （本次**未在 Java 容器上实测**这两条规则的效果，方法是照抄 lab 07 的已验证写法。）
+- **出网切断方式与 lab 07 相同**：`entrypoint.sh` 里
+  `iptables -A OUTPUT ! -o lo -p tcp --syn -j DROP` +
+  `-A OUTPUT -p udp --dport 53 -j DROP` + `-A OUTPUT -p tcp --dport 53 -j DROP`，
+  配合 `cap_add: [NET_ADMIN]`。
+  （已在 Java 容器上实测：对外 TCP 被阻断、`/flag` 不在镜像层、入站端口正常；
+  DNS 的平台差异同样适用，见 2.1.1。）
 - **`entrypoint.sh` 额外 `unset` 了 flag 环境变量**，所以不能靠「读环境变量」绕过，
   必须真的拿到代码执行 + 注册内存马。
 - **FreeMarker 版本刻意降到 2.3.29**（`pom.xml` 注释写明）：2.3.30 起
