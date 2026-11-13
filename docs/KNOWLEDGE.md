@@ -287,30 +287,79 @@ lab 07 step3 实测 ✅：
 
 ---
 
-## 7. 沙箱逃逸原理（lab 05 的方向）
+## 7. 沙箱逃逸原理（lab 05 的实测结论）
 
 Jinja2 的 `SandboxedEnvironment` 不是「禁止执行」，而是**在属性访问上做了白名单**：
 
 - `is_safe_attribute(obj, attr)`：`__class__` / `__globals__` / `__subclasses__` 之类
-  被 `unsafe` 拦掉（`is_internal_attribute` 检查魔术属性）
+  以 `_` 开头的名字一律被判 unsafe，返回 `UnsafeUndefined`
+  （单独渲染成空串，继续往下取属性才抛 `SecurityError` / `UndefinedError`）
 - `SandboxedEnvironment` 允许修改对象；`ImmutableSandboxedEnvironment` 连修改也禁止
+  （`modifies_known_mutable`：list / set / dict / deque 的 `append` `clear` `pop`
+  `update` `sort` … 全部 `SecurityError`）
 
 本仓库的沙箱渲染器（`shared/ssti_core/engines/jinja.py` 的 `_sandbox_environment`）
-刻意注册了 `config` / `session` / `request` / `url_for` / `get_flashed_messages`
-这几个「业务对象」，否则选手连起点都没有；沙箱类型由关卡
+注册了 `config` / `session` / `request` / `url_for` / `get_flashed_messages` 作为起点；
+lab 05 的 `app.py` 再额外注册一个业务回调 `helper`。沙箱类型由关卡
 `options={"sandbox": "default" | "immutable"}` 选择。
 
-逃逸的通用思路（**未在本仓库验证**，lab 05 关卡待补）：
+### 7.1 ⚠️ 先纠正一个流传很广的错误结论
 
-1. 找**没被白名单覆盖的属性通路**：沙箱拦 `obj.attr` 的点号访问，
-   但不一定拦 `obj|attr('...')`、`obj['...']`、`getattr(obj, ...)`；
-2. 走**字符串格式化 / 过滤器**：某些过滤器内部会调用 Python 的 `format` / `%`，
-   可以借此触达 `__class__`；
-3. 走**上下文里业务对象的类型**：`config` 是 dict、`request` 是对象，
-   它们的 `__class__` 一旦可达就是熟悉的 Python 对象图。
+**「沙箱拦点号，但 `|attr('__class__')` 能绕过」是过时信息。**
 
-要点：沙箱逃逸的每一步都仍然是「属性访问白名单 vs 等价语法」的博弈，
-和黑名单绕过同构，只是对手从「正则」变成了「代码里的 `if`」。
+Jinja2 自 **2.11.3** 起，`filters.do_attr` 在 `environment.sandboxed` 时会调用
+`is_safe_attribute()`；也就是说 `|attr` 和点号访问**受同一套检查**。
+本仓库实测：`{{ ()|attr('__class__')|attr('__base__')|attr('__subclasses__')() }}`
+在 **3.1.4 / 3.1.5 / 3.1.6 上全部失败**。
+
+四条属性通路**全部**过沙箱，一个都别指望：
+
+| 通路 | 结果 |
+|------|------|
+| 点号 `x.__class__` | `UnsafeUndefined`（渲染成空串） |
+| 过滤器 `x\|attr('__class__')` | 同上（2.11.3 起同样受检） |
+| `x\|map(attribute='__class__')` | `[Undefined]` |
+| 字面量 `'{0.__class__}'.format(x)` | 空串（`wrap_str_format` 包装了 `str.format`） |
+
+**结论：任何写在 2.11.3 之前的沙箱逃逸 writeup，在今天的 Jinja2 上都不成立。**
+
+### 7.2 仍然有效的原语：CVE-2025-27516（lab 05 的考点）
+
+`|attr('format')` 在**特定版本**上能拿到**未经沙箱包装**的 `str.format`，
+而 `str.format` 的格式字段名（`{0.xxx}` / `{0[xxx]}`）是 **CPython 在 C 层解析**的，
+不经过 Jinja 的任何检查 —— 于是可以做**只读的属性遍历**。
+
+```jinja2
+{{ ('{0.__class__}'|attr('format'))(()) }}                      → <class 'tuple'>
+{{ ('{0.__globals__[SITEDATA][flag]}'|attr('format'))(helper) }} → 把内存里的 flag 打出来
+```
+
+**版本边界很反直觉（本仓库逐条实测，务必按这个来）**：
+
+| Jinja2 | 结果 |
+|--------|------|
+| 3.1.4 | ❌ `SecurityError: access to attribute '__globals__' of 'function' object is unsafe.`（原语尚不存在） |
+| **3.1.5** | ✅ `<class 'tuple'>` —— **唯一可用版本** |
+| 3.1.6+ | ❌ 已修复：访问 `format` / `format_map` 返回 `SandboxedFormatter` |
+
+所以 lab 05 的 `requirements.txt` 写的是**精确锁** `Jinja2==3.1.5`。
+写成 `>=3.1.4,<3.1.6` 是错的 —— 它在语义上把 3.1.4 也算作可用，而 3.1.4 同样无解。
+
+**这条原语的能力边界**：只能把属性路径**打印成字符串**，**不能调用**
+（`format` 只做取值不做调用），因此**拿不到 RCE、读不到 `/flag` 文件**。
+lab 05 因此把 flag 作为教学装置放进服务端内存（应用模块全局 `SITEDATA['flag']`，
+经 `helper.__globals__` 可达）；想要真实 RCE 请去 lab 07 / 08。
+
+### 7.3 沙箱题的通用思路
+
+1. 先确认沙箱**到底拦了什么**（是属性名？是修改？是调用？），别套用记忆中的链；
+2. 遍历所有「能替你取值/求值」的**间接通道**：`str.format` / `%` 格式化、
+   `|map(attribute=)`、`|selectattr`、`|sort(attribute=)`、`|join`、
+   以及上下文里业务对象的类型；
+3. 这些间接通道是否受沙箱管辖，取决于**该版本的实现细节** ——
+   所以要么实测，要么锁死版本（lab 05 的做法）；
+4. 沙箱逃逸本质仍是「白名单 vs 等价语法」的博弈，只是对手从正则变成了代码里的 `if`。
+   既然是代码，就会有漏掉的等价语法 —— CVE-2025-27516 就是这么来的。
 
 ---
 

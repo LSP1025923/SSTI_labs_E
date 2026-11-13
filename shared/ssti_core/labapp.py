@@ -128,7 +128,7 @@ def register_lab_api(
             level=level.level_id,
             mode=mode,
             source_class=level.factory_name or level.title,
-            source_file=f"ssti_core/levels/{level.engine}.py",
+            source_file=level.source_file,
         )
         if mode == "god" and level.blind:
             # 盲关在上帝模式下额外给出「若成功本应输出什么」，与参考项目一致

@@ -142,7 +142,18 @@ Jinja2 的沙箱**只封属性名**：所有以 `_` 开头的名字（`__class__
 * 自检入口：容器起来后 `GET /api/sandbox/runtime` 返回
   `{"ok": true, "jinja2": "3.1.5", "cve": "CVE-2025-27516", "fixed_in": "3.1.6", "supported": ">=3.1.5,<3.1.6"}`；
   版本漂移时 `ok` 变 `false`，`/api/lab-info` 的 `description` 里也会提示，
-  同时向 stderr 打一条醒目的警告。**CI 里 `tests/test_sandbox_levels.py` 会跑同样的断言。**
+  同时向 stderr 打一条醒目的警告。
+* 同一条版本断言也在 `tests/test_sandbox_levels.py` 里（四关的参考解 + 被拦写法共 22 项）。
+  **这个文件不进 CI 的快速单元任务**（那里装的是最新 Jinja2，断言必然打红），
+  而是跑在专门的 `sandbox-cve` job 里 —— 该 job 精确安装 `Jinja2==3.1.5`，
+  专门盯「原语还在不在」：Jinja2 一旦发新版或有人放宽 pin，CI 先红，
+  而不是等玩家发现四关无解。本地/镜像内跑法：
+
+  ```bash
+  docker run --rm --entrypoint python -v "$PWD:/repo" -w /repo -e PYTHONPATH=shared \
+      ssti-jinja-sandbox:local tests/test_sandbox_levels.py
+  # 或者本地：pip install 'Jinja2==3.1.5' 后 PYTHONPATH=shared python tests/test_sandbox_levels.py
+  ```
 * 回滚办法：`pip install 'Jinja2==3.1.5'`，重建镜像即可。
 
 ## 这条原语能做什么、不能做什么

@@ -14,9 +14,10 @@
 2. 每一关 README 里写的**参考解 payload** 经 ``Level.render(...)`` 得到预期结果；
 3. 被拦的写法（经典 ``|attr`` 链、被 WAF 命中的关键字）**确实**失败。
 
-本文件**故意**不放进 CI 的快速单元任务：CI 装的是最新 Jinja2（≥3.1.6），
-第 1 条断言必然打红。它应该在 ``labs/05-jinja-sandbox`` 的镜像里跑，
-或用 ``pip install 'Jinja2==3.1.5'`` 后的环境跑。
+本文件**不在** CI 的快速单元任务里：那个任务装的是最新 Jinja2（≥3.1.6），
+第 1 条断言必然打红。它跑在专门的 ``sandbox-cve`` job 里（该 job 精确安装
+``Jinja2==3.1.5``），也可以在本靶场镜像里跑，或本地
+``pip install 'Jinja2==3.1.5'`` 后跑。
 """
 
 from __future__ import annotations
@@ -24,6 +25,16 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+
+# --- Windows 控制台默认编码是 GBK，而本脚本会打印 ✅ / ⚠️ 这类字符 -----------
+# 不处理的话，即使所有断言都通过，最后一行 print 也会抛 UnicodeEncodeError，
+# 脚本以非 0 退出（在 CI 上看起来就是「失败」）。这里强制走 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):  # 老解释器 / 已被重定向的流
+        pass
+
 import tempfile
 from pathlib import Path
 

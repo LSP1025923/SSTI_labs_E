@@ -60,20 +60,27 @@ public class ThemeController {
     }
 
     // ------------------------------------------------------------------
-    // 漏洞点 2：Thymeleaf 模板注入
+    // 漏洞点 2：Thymeleaf 视图名注入（经典 CVE-2021-25741 形态）
     //
-    // 主题页 theme/aurora.html 里用 th:replace="~{fragments/${userTheme} :: body}" 动态选择
-    // 「主题自带的小片段」。userTheme 直接来自请求参数、没有任何白名单。
+    // 业务上等价于「主题模板名由前端传入，后台直接当视图名返回」：
+    //     GET /theme/thymeleaf?theme=aurora      -> 渲染 templates/theme/aurora.html
+    //     GET /theme/thymeleaf?theme=<任意内容>   -> 视图名被原样拼接，无白名单
     //
-    // Thymeleaf 3 会对 th:* 属性值里的片段/模板表达式做 __${...}__ 预处理，
-    // 预处理结果会交给 SpringEL 求值 —— 于是 userTheme 可控 = SpEL 注入 = RCE。
-    // 这与「视图名注入」不是一回事：实测（3.0.15 与 3.0.11 都试过）视图名里的
-    // __${...}__ 不会被求值，模板名是原样拼进错误信息的；可控的必须是
-    // 模板内部参与表达式求值的那部分输入。
+    // 同时，主题页 theme/aurora.html 里还有一个动态片段选择：
+    //     <div th:replace="~{fragments/${userTheme} :: body}">
+    // fragment 参数会进入 Thymeleaf 的片段表达式解析。
+    //
+    // ⚠ 实测结论（见 docs/PAYLOADS.md 与 README「Thymeleaf 这条路的实测边界」）：
+    //   在 Thymeleaf 3.0.15（Boot 2.7.18 默认）以及 3.0.11 上，
+    //   视图名【不会】做 __${...}__ 预处理、片段名【不会】被当作 SpEL 求值
+    //   （报错信息里模板名始终是原样的 theme/__${7*7}__），
+    //   也就是说：可控的「模板名」本身并不构成 SpEL 注入点（这一点和不少网文说法相反）。
+    //   这条入口因此是「存在注入面但默认不可达 RCE」的对照题；
+    //   本靶场真正能打通到 RCE 的是 FreeMarker 那条链。
     // ------------------------------------------------------------------
     @GetMapping("/theme/thymeleaf")
     public String thymeleafPreview(@RequestParam(name = "theme", required = false, defaultValue = "aurora") String theme,
-                                   @RequestParam(name = "fragment", required = false, defaultValue = "body") String fragment,
+                                   @RequestParam(name = "fragment", required = false, defaultValue = "header") String fragment,
                                    org.springframework.ui.Model model) {
         model.addAttribute("userTheme", fragment);
         model.addAttribute("themeName", theme);

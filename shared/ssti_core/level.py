@@ -49,6 +49,17 @@ class Level:
     source: str = field(default="", repr=False)
     #: 构造本关的工厂函数名
     factory_name: str = field(default="", repr=False)
+    #: 工厂函数所在模块（如 ``ssti_core.levels.sandbox``）。由 :func:`make` 填充，
+    #: 供上帝模式显示「这关定义在哪个文件」。**不要**靠 ``engine`` 猜文件名 ——
+    #: 同一个 engine 可能有多份关卡库（沙箱关就在 ``sandbox.py`` 而不是 ``jinja.py``）。
+    source_module: str = field(default="", repr=False)
+
+    @property
+    def source_file(self) -> str:
+        """关卡定义的源文件路径（仓库内相对路径）。"""
+        if not self.source_module:
+            return f"ssti_core/levels/{self.engine}.py"
+        return self.source_module.replace(".", "/") + ".py"
 
     # -- 元信息 -----------------------------------------------------------
     @property
@@ -138,6 +149,7 @@ def make(factory: Callable[[], Level]) -> Level:
     """
     level = factory()
     level.factory_name = factory.__name__
+    level.source_module = getattr(factory, "__module__", "") or ""
     try:
         level.source = inspect.getsource(factory)
     except (OSError, TypeError):  # 冻结/打包环境中源码不可得

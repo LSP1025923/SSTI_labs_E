@@ -21,6 +21,16 @@ from __future__ import annotations
 
 import sys
 
+# --- Windows 控制台默认编码是 GBK，而本脚本会打印 ✅ / ⚠️ 这类字符 -----------
+# 不处理的话，即使所有断言都通过，最后一行 print 也会抛 UnicodeEncodeError，
+# 脚本以非 0 退出（在 CI 上看起来就是「失败」）。这里强制走 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):  # 老解释器 / 已被重定向的流
+        pass
+
+
 import requests
 
 BASE = "http://127.0.0.1:5000"
