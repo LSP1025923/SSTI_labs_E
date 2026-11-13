@@ -1,6 +1,6 @@
 """Jinja2 沙箱逃逸 4 关（``SandboxedEnvironment`` / ``ImmutableSandboxedEnvironment``）。
 
-先说结论（本仓库内实测，Jinja2 3.1.4 / 3.1.5 / 3.1.6 逐条 payload 跑过）：
+先说结论（``python:3.11-slim`` + pip 装 3.1.4 / 3.1.5 / 3.1.6，逐条 payload 实测）：
 
 * 网上流传的「经典 ``|attr`` 链」::
 
@@ -9,11 +9,23 @@
   在 Jinja2 **2.11.3 之后就已经失效**：``SandboxedEnvironment.getattr`` 会调用
   ``is_safe_attribute``，任何以 ``_`` 开头的属性名都返回 ``UnsafeUndefined``。
   点号、``|attr``、``|map(attribute=)``、``'{0.__class__}'.format(x)`` 四条路全部被检查。
-* 当前仍然有效的原语是 **CVE-2025-27516**：``|attr('format')`` 取到的
-  ``str.format`` 没有经过沙箱包装，而格式字段名 ``{0.__globals__[SITEDATA]}``
-  是 CPython 在 C 层解析的，**不经过 Jinja 的检查**，于是可以做属性遍历/取值。
-  Jinja2 **3.1.6** 通过在访问 ``format`` 时返回 ``SandboxedFormatter`` 包装修掉了它。
-  所以 ``labs/05-jinja-sandbox/requirements.txt`` 固定 ``Jinja2>=3.1.4,<3.1.6``。
+  本仓库实测：3.1.4 / 3.1.5 / 3.1.6 **三个版本都拦得住**这条链。
+* 仍然有效的原语是 **CVE-2025-27516**：``|attr('format')`` 取到的 ``str.format``
+  没有经过沙箱包装，而格式字段名 ``{0.__globals__[SITEDATA]}`` 是 CPython 在 C 层
+  解析的，**不经过 Jinja 的检查**，于是可以做只读的属性遍历/取值。
+* **版本边界（本仓库实测，很反直觉，务必按这个来）**：
+
+  ============  ==========================================================
+  Jinja2 3.1.4   原语**不可用**：``SecurityError: access to attribute
+                 '__globals__' of 'function' object is unsafe.``
+  Jinja2 3.1.5   原语**可用** —— **唯一可用版本**
+  Jinja2 3.1.6   已修复：访问 ``format`` / ``format_map`` 返回 SandboxedFormatter
+  ============  ==========================================================
+
+  所以 ``labs/05-jinja-sandbox/requirements.txt`` 写的是**精确锁** ``Jinja2==3.1.5``。
+  写成 ``>=3.1.4,<3.1.6`` 是错的：它在语义上把 3.1.4 也算作可用，而 3.1.4 上这四关
+  同样无解（只是失败原因不同）。宿主 ``app.py`` 会在启动时做版本自检并大声告警，
+  ``GET /api/sandbox/runtime`` 可机器可读地查询。
 
 要说清楚的代价：这条原语是**只读**的（只能把属性路径打印成字符串，不能调用），
 拿不到 RCE，因此本靶场把 flag 同时放进服务端内存，关卡目标是把它 dump 出来。

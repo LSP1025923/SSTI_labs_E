@@ -1,6 +1,6 @@
-# =============================================================================
-# dev-fastboot.ps1 - dev-only speedup: compile one class on the host, replace it
-# inside the running container's fat jar, restart the container.
+﻿# =============================================================================
+# dev-fastboot.ps1 - dev-only speedup: compile changed classes on the host,
+# repack the fat jar on the host, docker cp it in, restart the container.
 # Production builds still use "docker build" (multi-stage Dockerfile).
 #
 # Usage:
@@ -25,17 +25,13 @@ $work = Join-Path $env:TEMP "lab08-fastboot"
 if (Test-Path $work) { Remove-Item -Recurse -Force $work }
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
-Write-Host "[1/4] copy fat jar out of container (for classpath)"
+Write-Host "[1/4] copy fat jar out of container"
 docker cp "${Container}:/app/app.jar" "$work\app.jar" | Out-Null
 Push-Location $work
-& $jarExe xf "$work\app.jar" BOOT-INF/classes BOOT-INF/lib 2>$null
+& $jarExe xf "$work\app.jar"
 Pop-Location
 
-$libs = (Get-ChildItem -Recurse -File "$work\BOOT-INF\lib" -Filter *.jar | ForEach-Object { $_.FullName }) -join ';'
-$cpAll = "$work\BOOT-INF\classes;$libs"
-
-# Windows argv 会把含 ';' 的 -cp 拆坏（javac 的 @argfile 也不稳），
-# 所以把 classes 和所有依赖 jar 拍平到一个目录，用通配符 classpath。
+# Windows argv splits a -cp containing ';', so flatten classes + libs and use a wildcard
 $cpDir = Join-Path $work "cp"
 New-Item -ItemType Directory -Force -Path $cpDir | Out-Null
 Copy-Item -Recurse -Force "$work\BOOT-INF\classes\*" $cpDir
@@ -49,23 +45,25 @@ $srcList = @($Files | ForEach-Object { Join-Path $root $_ })
 & $javac -encoding UTF-8 -nowarn -cp $cpFlat -d $outDir @srcList
 if ($LASTEXITCODE -ne 0) { throw "javac failed" }
 
-Write-Host "[3/4] push classes into /app/app.jar"
+Write-Host "[3/4] repack app.jar on the host"
+$updateDir = Join-Path $work "update"
+New-Item -ItemType Directory -Force -Path $updateDir | Out-Null
 foreach ($f in $Files) {
   $cls = [IO.Path]::GetFileNameWithoutExtension($f) + ".class"
   $found = Get-ChildItem -Recurse -File $outDir -Filter $cls | Select-Object -First 1
   if (-not $found) { throw "compiled class missing: $cls" }
-  $rel = $found.FullName.Substring($outDir.Length + 1) -replace '\\', '/'
-  $dest = Join-Path $work ("stage/" + $rel)
+  $rel = $found.FullName.Substring($outDir.Length + 1)
+  $dest = Join-Path $updateDir ("BOOT-INF/classes/" + $rel)
   New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
   Copy-Item $found.FullName $dest
-  $containerDir = "/tmp/stage/" + (Split-Path $rel)
-  docker exec $Container sh -c "rm -rf /tmp/stage && mkdir -p $containerDir" | Out-Null
-  docker cp $dest "${Container}:/tmp/stage/$rel" | Out-Null
-  docker exec $Container sh -c "cd /tmp && jar uf /app/app.jar stage/$rel" | Out-Null
-  Write-Host "    updated $rel"
+  Write-Host "    staged BOOT-INF/classes/$rel"
 }
+Push-Location $updateDir
+& $jarExe uf "$work\app.jar" (Get-ChildItem -Recurse -File $updateDir | ForEach-Object { $_.FullName.Substring($updateDir.Length + 1) })
+Pop-Location
 
-Write-Host "[4/4] restart container"
+Write-Host "[4/4] push jar + restart container"
+docker cp "$work\app.jar" "${Container}:/app/app.jar" | Out-Null
 docker restart $Container | Out-Null
 for ($i = 0; $i -lt 40; $i++) {
   Start-Sleep -Seconds 2

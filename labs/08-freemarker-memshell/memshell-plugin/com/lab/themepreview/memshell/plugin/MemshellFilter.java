@@ -121,15 +121,15 @@ public class MemshellFilter implements Filter {
                 + " | pid=" + pid();
     }
 
+    /** JDK8 没有 ProcessHandle，用 RuntimeMXBean 的 "pid@host" 取 pid。 */
     private String pid() {
         try {
-            java.lang.reflect.Method m = Class.forName("java.lang.ProcessHandle")
-                    .getMethod("current");
-            Object h = m.invoke(null);
-            Object id = h.getClass().getMethod("pid").invoke(h);
-            return String.valueOf(id);
+            Class<?> clazz = Class.forName("java.lang.management.ManagementFactory");
+            Object bean = clazz.getMethod("getRuntimeMXBean").invoke(null);
+            String name = (String) bean.getClass().getMethod("getName").invoke(bean);
+            return name;
         } catch (Throwable t) {
-            return "n/a";
+            return "n/a(" + t.getClass().getSimpleName() + ")";
         }
     }
 

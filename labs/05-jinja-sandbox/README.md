@@ -6,7 +6,7 @@
 | 引擎 | Jinja2 沙箱（`SandboxedEnvironment` / `ImmutableSandboxedEnvironment`） |
 | 关卡数 | 4（id `0`–`3`） |
 | 依赖网络 | 否 |
-| 固定版本 | `Jinja2>=3.1.4,<3.1.6`（实际装到 **3.1.5**；**故意**不升到 3.1.6，见下文） |
+| 固定版本 | **精确锁** `Jinja2==3.1.5`（3.1.4 上原语尚不存在，3.1.6 起被修复，两者都无解；见下文） |
 | 逃逸原语 | **CVE-2025-27516**：`|attr('format')` → 未过沙箱的 `str.format` → 字段名 `{0.__globals__[key]}` 在 C 层解析 |
 | flag | 容器内 `/flag`（entrypoint 写入）**同时**放一份在服务端内存 `SITEDATA['flag']`（教学装置，见下文） |
 
@@ -111,27 +111,39 @@ Jinja2 的沙箱**只封属性名**：所有以 `_` 开头的名字（`__class__
 {{ (('{0.'~('%c'|format(95))~('%c'|format(95))~'globals'~('%c'|format(95))~('%c'|format(95))~'[SITEDATA][flag]}')|attr('format'))(helper) }} → flag{...}
 ```
 
-## 为什么锁定 Jinja2 3.1.5
+## 为什么精确锁定 Jinja2 3.1.5
 
-本靶场**故意**装一个已知有漏洞的 Jinja2，并在 `app.py` 里做运行时自检：
+本靶场**故意**装一个已知有漏洞的 Jinja2，并在 `app.py` 里做运行时自检。
 
-| 版本 | `{{ ('{0.__class__}'|attr('format'))(()) }}` | `{{ ()|attr('__class__')|... }}` | 本靶场 |
-|------|--------------------------------------------|----------------------------------|--------|
-| 3.1.4 / 3.1.5 | `<class 'tuple'>`（逃逸成立） | 失败（UnsafeUndefined） | ✅ 可解 |
-| **3.1.6+** | 空串（被 `SandboxedFormatter` 拦下） | 失败 | ❌ 四关全部无解 |
+版本边界很反直觉，下面是 `python:3.11-slim` + pip 逐条 payload 实测的结果
+（逃逸探针用 `{{ ('{0.__class__}'|attr('format'))(()) }}`）：
+
+| 版本 | 本靶场用的原语 | 教科书经典链 `\|attr('__class__')` | 本靶场可解？ |
+|------|----------------|-----------------------------------|--------------|
+| 3.1.4 | 失败：`SecurityError: access to attribute '__globals__' of 'function' object is unsafe.` | 失败（→ `UnsafeUndefined`） | ❌ **不可解** |
+| **3.1.5** | `<class 'tuple'>` —— **逃逸成立** | 失败 | ✅ **唯一可解版本** |
+| 3.1.6+ | 空串（被 `SandboxedFormatter` 拦下） | 失败 | ❌ 四关全部无解 |
+
+⚠️ 所以 `requirements.txt` 写的是**精确锁** `Jinja2==3.1.5`，而不是
+`>=3.1.4,<3.1.6` —— 后者在语义上把 3.1.4 也算作可用，但 3.1.4 上这四关同样无解
+（失败原因不同：3.1.4 是原语尚不存在，3.1.6 是被修复）。
+
+要点：
 
 * `|attr('format')` 的绕过就是 **CVE-2025-27516**；**修复版本是 Jinja2 3.1.6**
   （访问 `format` / `format_map` 时不再直接返回内建方法，而是套一层
   `SandboxedFormatter`，字段名里的属性访问重新回到沙箱检查）。
+* 教科书的「经典 `|attr` 链」在 2.11.3 之后就已经失效，**三个版本都拦得住**
+  （`do_attr` 会调用 `is_safe_attribute`）。别把时间花在 `__class__` 上。
 * `|attr('format')` 是这个版本里拿 `str.format` 的**唯一**入口（点号访问的
   `'{0.__class__}'.format(x)` 早就被 `wrap_str_format` 拦住了），
   所以 L3 **没有**去拦子串 `attr`：拦掉它这一关直接无解。L3 改拦关键字、
-  L4 拦字符，都能实测绕过。
-* 自检入口：容器起来后 `GET /api/sandbox/runtime` 会返回
-  `{"ok": true, "jinja2": "3.1.5", "cve": "CVE-2025-27516", "fixed_in": "3.1.6", ...}`；
-  版本漂移时 `ok` 变 `false`，`/api/lab-info` 的 `description` 里也会红字提示，
-  同时向 stderr 打一条醒目的警告。
-* 回滚办法：`pip install 'Jinja2>=3.1.4,<3.1.6'`，重建镜像即可。
+  L4 拦字符，都已实测绕过。
+* 自检入口：容器起来后 `GET /api/sandbox/runtime` 返回
+  `{"ok": true, "jinja2": "3.1.5", "cve": "CVE-2025-27516", "fixed_in": "3.1.6", "supported": ">=3.1.5,<3.1.6"}`；
+  版本漂移时 `ok` 变 `false`，`/api/lab-info` 的 `description` 里也会提示，
+  同时向 stderr 打一条醒目的警告。**CI 里 `tests/test_sandbox_levels.py` 会跑同样的断言。**
+* 回滚办法：`pip install 'Jinja2==3.1.5'`，重建镜像即可。
 
 ## 这条原语能做什么、不能做什么
 

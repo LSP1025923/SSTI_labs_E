@@ -33,12 +33,14 @@ from ssti_core.levels import levels_for
 from ssti_core.levels import sandbox as sandbox_levels
 
 # ---------------------------------------------------------------------------
-# 版本自检：本靶场依赖 CVE-2025-27516（Jinja2 3.1.6 修复）。
-# 一旦有人 `pip install -U`，四关会**静默变成无解**——所以这里必须吵起来。
+# 版本自检：本靶场依赖 CVE-2025-27516 的逃逸原语，而该原语**只在 3.1.5 上可用**
+# （3.1.4 尚不可用、3.1.6 已修复 —— 见 requirements.txt 里的实测边界）。
+# 一旦有人 `pip install -U`，四关会**静默变成无解**，所以这里必须吵起来。
 # ---------------------------------------------------------------------------
-JINJA2_MIN = "3.1.4"
-JINJA2_MAX_EXCLUSIVE = "3.1.6"
+#: 原语可用的最低版本（=唯一可用版本）
+JINJA2_MIN = "3.1.5"
 #: 修复 CVE-2025-27516 的版本：`format` / `format_map` 访问会被包成 SandboxedFormatter
+JINJA2_MAX_EXCLUSIVE = "3.1.6"
 JINJA2_FIXED_IN = "3.1.6"
 CVE = "CVE-2025-27516"
 
@@ -80,12 +82,12 @@ if not ESCAPE_AVAILABLE:
     print(
         "\n"
         "=" * 78 + "\n"
-        f"⚠️ 版本自检失败：本靶场要求 Jinja2 >={JINJA2_MIN},<{JINJA2_MAX_EXCLUSIVE}，"
-        f"当前装的是 {JINJA2_VERSION}。\n"
-        f"   逃逸原语（{CVE}）在 {JINJA2_FIXED_IN} 已被修复，"
-        "四个关卡会全部无解。\n"
-        "   请勿升级 Jinja2；需要最新版就把 requirements.txt 的固定范围一起改，\n"
-        "   并先读 README「为什么锁定 Jinja2 3.1.5」。\n" + "=" * 78 + "\n",
+        f"⚠️ 版本自检失败：本靶场要求 Jinja2 >={JINJA2_MIN},<{JINJA2_MAX_EXCLUSIVE}"
+        f"（实测只有 3.1.5 同时满足「原语可用且未被修复」），当前装的是 {JINJA2_VERSION}。\n"
+        f"   3.1.4 上原语尚不存在，{JINJA2_FIXED_IN} 起（{CVE}）已被修复，"
+        "两种情况都会让四个关卡全部无解。\n"
+        "   请勿改动 Jinja2 版本；确需升级就把 requirements.txt 与本文件的范围一起改，\n"
+        "   并先读 README「为什么精确锁定 Jinja2 3.1.5」。\n" + "=" * 78 + "\n",
         file=sys.stderr,
     )
 
@@ -133,8 +135,9 @@ META = LabMeta(
         "（`__class__` / `__globals__` / `__subclasses__` …）都拿不到，"
         "教科书里的 `|attr` 链早已失效；本靶场教你当前仍然有效的原语，"
         "以及当 WAF 继续加压时怎么把关键字与字符在运行期拼回来。"
-        "靶场固定 `Jinja2>=3.1.4,<3.1.6`（CVE-2025-27516 的修复版本是 3.1.6，"
-        "升级后四关会全部无解）；原因与代价见 README 的「为什么锁定 Jinja2 3.1.5」。"
+        "靶场**精确锁定** `Jinja2==3.1.5`（实测：3.1.4 上原语尚不存在，"
+        "3.1.6 已修复 CVE-2025-27516，两者都会让四关无解）；"
+        "原因与代价见 README 的「为什么精确锁定 Jinja2 3.1.5」。"
         f"\n\n运行时自检：Jinja2 {JINJA2_VERSION} · "
         f"逃逸原语{'可用 ✅' if ESCAPE_AVAILABLE else '不可用 ❌（版本漂移！）'} · "
         f"CVE {CVE}（{JINJA2_FIXED_IN} 修复）"

@@ -34,9 +34,11 @@ FLAG_PATH = "/flag"
 FAILS: list[str] = []
 CHECKS = 0
 
-#: L2 用的慢循环：实测 range(20000000) + 空循环体只有 ~0.22 s，
-#: 带 `{{ '' }}` 循环体约 1.36 s（README 有实测表），所以用后者当"慢"。
-SLOW_BODY = "{% for i in range(20000000) %}{{ '' }}{% endfor %}"
+#: L2 用的慢循环：实测（本镜像内、经 /api/render，宿主 CPU 相关）
+#: `range(20000000)` + 空循环体 ≈ 0.24 s，body 换成 `{{ '' }}` ≈ 0.60 s，
+#: `range(50000000)` + `{{ '' }}` ≈ 1.44 s，基线 ≈ 0.01 s。
+#: 所以用 5 千万次 + 非空循环体当"慢"，阈值取 0.5 s。
+SLOW_BODY = "{% for i in range(50000000) %}{{ '' }}{% endfor %}"
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
@@ -191,7 +193,7 @@ def main() -> int:
     check("GET /echo/<名字> 拿到写出的文件", status == 200, str(status))
     check("写出的内容就是 /flag 的内容", body.strip() == flag, repr(body[:80]))
 
-    status, body = get("/echo/不存在的文件.txt")
+    status, body = get("/echo/definitely-missing-file.txt")
     check("不存在的文件返回 404", status == 404, str(status))
 
     # ---------------------------------------------------------------- 4
