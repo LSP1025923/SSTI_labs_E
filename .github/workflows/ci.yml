@@ -68,10 +68,12 @@ jobs:
           python - <<'PY'
           import re, pathlib
           src = pathlib.Path("scripts/scaffold_lab.py").read_text(encoding="utf-8")
-          ports = [int(m) for m in re.findall(r"port=(\d{4}),", src)]
+          # 只看宿主映射端口 `port=`，不要误抓 `app_port=`（容器内监听端口）
+          ports = [int(m) for m in re.findall(r"(?<!app_)port=(\d{4}),", src)]
           assert ports, "没有解析到任何 port= 定义"
           assert len(ports) == len(set(ports)), f"端口重复：{sorted(ports)}"
-          assert all(8000 < p < 9000 for p in ports), f"端口越界：{ports}"
+          assert all(8090 < p < 8100 for p in ports), f"端口越界（应落在 8091–8098）：{ports}"
+          assert len(ports) == 8, f"应有 8 个靶场，实际 {len(ports)}"
           print("端口分配：", sorted(ports))
           PY
 
