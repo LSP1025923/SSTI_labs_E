@@ -1,0 +1,20 @@
+# 05-jinja-sandbox 依赖
+#
+# ⚠️ Jinja2 在这里是**精确锁定**的，请绝对不要随手升级或放宽：
+#
+#   本靶场的 4 关全部建立在 CVE-2025-27516 之上 —— `|attr('format')` 能拿到**未经沙箱
+#   包装**的 str.format，再用 `{0.__globals__[key]}` 这类格式字段名做属性遍历
+#   （字段名由 CPython 在 C 层解析，不经过 Jinja 的检查）。
+#
+#   本仓库实测的版本边界（python:3.11-slim + pip 安装，逐条 payload 跑过）：
+#     Jinja2 3.1.4  → 原语**不可用**：SecurityError: access to attribute '__globals__'
+#                     of 'function' object is unsafe.
+#     Jinja2 3.1.5  → 原语**可用**（唯一可用版本，本靶场因此精确锁这一版）
+#     Jinja2 3.1.6  → 已修复：访问 format / format_map 返回 SandboxedFormatter
+#
+#   所以范围必须写成 `==3.1.5`。写成 `>=3.1.4,<3.1.6` 是错的 —— 那在语义上包含了
+#   3.1.4，而 3.1.4 上这四关同样无解（只是失败原因不同）。
+#   运行时自检：GET /api/sandbox/runtime（也会在启动日志里大声告警）。
+#   完整说明与回滚办法见 labs/05-jinja-sandbox/README.md「为什么精确锁定 Jinja2 3.1.5」。
+Flask>=3.0,<4.0
+Jinja2==3.1.5

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ThemeHub · 主题预览控制台</title>
+  <style>
+    :root { --accent:#ff6b2b; --accent2:#ffd166; --bg:#0e0f13; --card:#171922; --line:#282c3a; --txt:#e7e9ef; --dim:#9aa0b0; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.65 "Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif; }
+    header { padding:26px 32px 18px; border-bottom:1px solid var(--line);
+             background:radial-gradient(1000px 200px at 12% -60%, rgba(255,107,43,.22), transparent 70%); }
+    h1 { margin:0 0 6px; font-size:22px; letter-spacing:.4px; }
+    h1 span { color:var(--accent); }
+    .sub { color:var(--dim); font-size:13px; }
+    .wrap { max-width:1100px; margin:0 auto; padding:24px 32px 60px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px 20px; }
+    .card h2 { margin:0 0 10px; font-size:15px; color:var(--accent2); }
+    code, pre { font-family:"JetBrains Mono",Consolas,monospace; }
+    code { background:#0b0c10; border:1px solid var(--line); border-radius:4px; padding:1px 5px; color:#ffd7c2; }
+    pre { background:#0b0c10; border:1px solid var(--line); border-radius:8px; padding:12px 14px; overflow:auto; font-size:12.5px; color:#cfd4e2; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th,td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { color:var(--dim); font-weight:600; }
+    .warn { border:1px solid #7a3a12; background:#2a1608; color:#ffc79a; border-radius:8px; padding:12px 16px; margin:18px 0; }
+    .warn b { color:var(--accent); }
+    .goal { border:1px dashed var(--accent); border-radius:8px; padding:12px 16px; margin:14px 0; }
+    a { color:var(--accent2); }
+    ol li, ul li { margin:4px 0; }
+    .foot { color:var(--dim); font-size:12px; margin-top:26px; }
+    form { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    input[type=text] { background:#0b0c10; border:1px solid var(--line); color:var(--txt); border-radius:6px; padding:7px 10px; min-width:420px; font-family:Consolas,monospace; }
+    button { background:var(--accent); border:0; color:#180d05; font-weight:700; border-radius:6px; padding:8px 16px; cursor:pointer; }
+    iframe { width:100%; height:190px; border:1px solid var(--line); border-radius:8px; background:#fff; margin-top:12px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>ThemeHub · <span>主题预览控制台</span></h1>
+  <div class="sub">多租户 SaaS 后台 ｜ 运营自助改模板，前台实时预览 ｜ <code>v1.4.2</code></div>
+</header>
+
+<div class="wrap">
+
+  <div class="warn">
+    <b>⚠ 出网已切断（no-egress）</b><br>
+    容器内 <code>iptables</code> 丢弃 eth0 上的出向 TCP SYN 与 UDP/53：<b>反弹 shell、DNSLog、任何主动外连都不可用</b>。
+    只有「客户端 → 服务端」这条入向 HTTP 通道是通的。想拿数据，得让 shell 住在 JVM 内存里。
+  </div>
+
+  <div class="goal">
+    <b>目标：</b>读取容器内的 <code>/flag</code>。站点<b>不提供</b>任何读 flag 的接口，必须真的打通一条 RCE 链。
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>① FreeMarker 主题预览（漏洞点 1）</h2>
+      <p>运营在编辑区写 FreeMarker 片段，服务端用 <code>new Template(StringReader)</code> 直接渲染。
+         为了让预览和线上渲染一致，类解析器被配成了 <code>UNRESTRICTED</code>。</p>
+      <form method="get" action="/theme/preview" target="pv1">
+        <input type="text" name="template" value="${7*7}" placeholder="FreeMarker 模板片段">
+        <button type="submit">预览</button>
+      </form>
+      <iframe name="pv1" src="/theme/preview?template=%24%7B7*7%7D"></iframe>
+      <p class="sub">接口：<code>GET /theme/preview?template=&lt;ftl&gt;&amp;theme=&lt;name&gt;</code><br>
+         数据模型：<code>theme_name / now / site / servletContext</code>（<code>GET /api/theme-vars</code>）</p>
+    </div>
+
+    <div class="card">
+      <h2>② Thymeleaf 模板预览（漏洞点 2）</h2>
+      <p>主题模板按名字取：控制器把 <code>"theme/" + theme</code> 直接当视图名返回，
+         交给 Thymeleaf 解析。Thymeleaf 3 会对视图名做 <code>__${...}__</code> 预处理。</p>
+      <form method="get" action="/theme/thymeleaf" target="pv2">
+        <input type="text" name="theme" value="aurora" placeholder="主题名">
+        <button type="submit">预览</button>
+      </form>
+      <iframe name="pv2" src="/theme/thymeleaf?theme=aurora"></iframe>
+      <p class="sub">接口：<code>GET /theme/thymeleaf?theme=&lt;name&gt;</code></p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <h2>攻击链（4 步）</h2>
+    <table>
+      <tr><th style="width:64px">步骤</th><th>目标</th><th>提示</th></tr>
+      <tr><td>L1</td><td>确认模板注入</td><td><code>${7*7}</code> → <code>49</code></td></tr>
+      <tr><td>L2</td><td>任意 Java 代码执行</td><td>FreeMarker 2.3.29 还带着 <code>freemarker.template.utility.Execute</code>，试试 <code>?new()</code></td></tr>
+      <tr><td>L3</td><td>把 Filter 注进运行中的 Tomcat</td><td>需要拿到 <code>StandardContext</code>；注册后 <code>GET /memshell?cmd=id</code></td></tr>
+      <tr><td>L4</td><td>用内存马读 flag</td><td>全程只有入向 HTTP，零出网流量</td></tr>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <h2>接口清单</h2>
+    <table>
+      <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+      <tr><td>GET</td><td><code>/</code></td><td>本页</td></tr>
+      <tr><td>GET</td><td><code>/healthz</code></td><td>健康检查，<code>ok</code></td></tr>
+      <tr><td>GET</td><td><code>/api/lab-info</code></td><td>靶场元信息（含攻击链、no_egress 说明）</td></tr>
+      <tr><td>GET</td><td><code>/theme/preview</code></td><td>漏洞点 1：FreeMarker 模板串渲染</td></tr>
+      <tr><td>GET</td><td><code>/theme/thymeleaf</code></td><td>漏洞点 2：Thymeleaf 视图名注入</td></tr>
+      <tr><td>GET</td><td><code>/api/theme-vars</code></td><td>预览数据模型说明</td></tr>
+      <tr><td>GET</td><td><code>/api/memshell-class</code></td><td>内嵌 memshell Filter 字节码（base64）</td></tr>
+      <tr><td>GET</td><td><code>/docs/lab.md</code></td><td>题目说明与完整 WP</td></tr>
+    </table>
+  </div>
+
+  <div class="foot">
+    ThemeHub v1.4.2 ｜ Spring Boot 2.7.18 · embedded Tomcat 9 · FreeMarker 2.3.29 · Thymeleaf 3.0 ｜
+    本服务仅用于隔离教学环境，请勿暴露到公网。
+  </div>
+</div>
+</body>
+</html>

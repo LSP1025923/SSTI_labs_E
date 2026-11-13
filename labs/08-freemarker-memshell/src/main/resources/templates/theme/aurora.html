@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8">
+  <title>ThemeHub · 主题预览</title>
+</head>
+<body style="font-family:system-ui,sans-serif;background:#0e0f13;color:#e7e9ef;padding:24px">
+  <h2 style="color:#ffd166">aurora 主题预览</h2>
+  <p>这是后台主题库里已上架的主题模板（<code>classpath:/templates/theme/aurora.html</code>）。</p>
+
+  <!--
+    主题包会把自带的公共片段拼进来（页头/页脚）。
+    注意：Thymeleaf 的片段选择器 ~{...} 内部【不会】对 ${...} 做求值/插值，
+    写成 ~{fragments/${userTheme} :: body} 时它会连 ${userTheme} 一起当字面量模板名去解析。
+    这是一个真实且常见的误用（会被当成"动态片段"，实际不生效），
+    本站点保留这个写法作为对照，但业务默认路径用固定片段，保证页面本身是好的。
+  -->
+  <div th:replace="~{fragments/header :: body}">（页头片段占位）</div>
+
+  <p>主题名来自请求参数：<code>GET /theme/thymeleaf?theme=aurora</code></p>
+  <p>（历史遗留）片段参数：<code>GET /theme/thymeleaf?theme=aurora&amp;fragment=header</code></p>
+</body>
+</html>

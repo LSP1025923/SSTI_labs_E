@@ -1,0 +1,151 @@
+name: ci
+
+# 轻量 CI：**不构建镜像**（那太慢且需要大 runner），只做几件快而值钱的事：
+#   1. 语法检查所有 Python；
+#   2. 跑公共语义层与关卡注册表的单元测试（WafSpec / Level / 引擎 / flag 工具）；
+#   3. 每个靶场的 app.py 都能导入，且路由表里确实挂了 /api/render；
+#   4. compose 语法校验、靶场文件完整性、shell 脚本行尾。
+#
+# 镜像构建与端到端验证由本地负责（需要 Docker + 较多磁盘）：
+#   scripts/build-all.sh && python scripts/verify_labs.py
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  unit:
+    name: ssti_core 单元测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install "Flask>=3.0,<4.0" "Jinja2>=3.1.4" "Mako>=1.3.5" \
+                      "tornado>=6.4" "PyJWT>=2.8.0" "requests>=2.32.0"
+
+      - name: 语法检查
+        run: python -m compileall -q shared scripts tests
+
+      # WafSpec 是整个题库的公共语义层，先单独测（且刻意不依赖 Flask，
+      # 用来守护「import ssti_core 不应该要求装 Flask」这个约定）
+      - name: WafSpec / flag 工具（无 Flask 依赖）
+        env:
+          PYTHONPATH: shared
+        run: python tests/test_waf.py
+
+      - name: 关卡注册表 / 三引擎渲染 / lab-info 契约
+        env:
+          PYTHONPATH: shared
+        run: python tests/test_core.py
+
+      - name: 各靶场 app.py 可导入且路由健全
+        run: python tests/test_lab_imports.py
+
+  sandbox-cve:
+    name: 沙箱靶场 CVE 漂移（Jinja2==3.1.5）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 单独一个 job，因为这里**必须**精确装 3.1.5：
+      #   * 单元任务装的是最新 Jinja2（≥3.1.6），CVE-2025-27516 已修复，
+      #     四关的参考解会全部失败 —— 那个任务是用来测框架的，不是测 CVE 的；
+      #   * 这个任务专门盯「原语还在不在」：Jinja2 一旦发布 3.1.7 或有人放宽 pin，
+      #     这里会先红，而不是等玩家发现四关无解。
+      - name: 安装锁定版本
+        run: |
+          python -m pip install --upgrade pip
+          pip install "Flask>=3.0,<4.0" "Jinja2==3.1.5"
+
+      - name: 确认装到的就是 3.1.5
+        run: python -c "from importlib.metadata import version; v=version('Jinja2'); assert v=='3.1.5', v; print('Jinja2', v)"
+
+      - name: 四关参考解 + 被拦写法（22 项）
+        env:
+          PYTHONPATH: shared
+        run: python tests/test_sandbox_levels.py
+
+  metadata:
+    name: 靶场元信息与编排自洽
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 端口分配唯一且落在 8091–8098
+        run: |
+          python - <<'PY'
+          import re, pathlib
+          src = pathlib.Path("scripts/scaffold_lab.py").read_text(encoding="utf-8")
+          # 只看宿主映射端口 `port=`，不要误抓 `app_port=`（容器内监听端口）
+          ports = [int(m) for m in re.findall(r"(?<!app_)port=(\d{4}),", src)]
+          assert ports, "没有解析到任何 port= 定义"
+          assert len(ports) == len(set(ports)), f"端口重复：{sorted(ports)}"
+          assert all(8090 < p < 8100 for p in ports), f"端口越界（应落在 8091–8098）：{ports}"
+          assert len(ports) == 8, f"应有 8 个靶场，实际 {len(ports)}"
+          print("端口分配：", sorted(ports))
+          PY
+
+      - name: 每个靶场文件完整
+        run: |
+          fail=0
+          # Python 系靶场：Dockerfile + entrypoint.sh + requirements.txt + README.md
+          for d in labs/0[1-7]-*/; do
+            for f in Dockerfile entrypoint.sh requirements.txt README.md app.py; do
+              [ -f "$d$f" ] || { echo "缺少：$d$f"; fail=1; }
+            done
+          done
+          # Java 靶场：Dockerfile + entrypoint.sh + pom.xml + README.md
+          for f in Dockerfile entrypoint.sh pom.xml README.md; do
+            [ -f "labs/08-freemarker-memshell/$f" ] || {
+              echo "缺少：labs/08-freemarker-memshell/$f"; fail=1; }
+          done
+          exit $fail
+
+      - name: README 不是占位文件
+        run: |
+          fail=0
+          for f in labs/*/README.md; do
+            size=$(wc -c < "$f")
+            if [ "$size" -lt 400 ]; then
+              echo "疑似占位/未完成（$size 字节）：$f"; fail=1
+            fi
+          done
+          exit $fail
+
+      - name: compose 语法校验
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.yml --profile java config -q
+          docker compose -f docker-compose.prod.yml config -q
+          for f in labs/*/docker-compose.yml; do
+            echo "--- $f"
+            docker compose -f "$f" config -q
+          done
+
+      - name: shell 脚本必须是 LF 行尾
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            if grep -qU $'\r' "$f"; then echo "CRLF 行尾（应为 LF）：$f"; fail=1; fi
+          done < <(find . -name '*.sh' -not -path './.git/*')
+          exit $fail

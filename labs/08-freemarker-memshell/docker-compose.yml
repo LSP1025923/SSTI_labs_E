@@ -1,0 +1,26 @@
+services:
+  freemarker-memshell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ssti-freemarker-memshell:local
+    container_name: ssti-08-freemarker-memshell
+    ports:
+      - "${FREEMARKER_MEMSHELL_PORT:-8098}:8080"
+    environment:
+      # Flag 注入优先级：GZCTF_FLAG > DASFLAG > FLAG > STATIC_FLAG
+      GZCTF_FLAG: "${GZCTF_FLAG:-}"
+      DASFLAG: "${DASFLAG:-}"
+      FLAG: "${FLAG:-}"
+      STATIC_FLAG: "${STATIC_FLAG:-flag{change_me_before_deploy}}"
+      JAVA_OPTS: "-Xms64m -Xmx256m -Dfile.encoding=UTF-8"
+    # 内存马靶场必须真的切断出网：见 entrypoint.sh 的 iptables 规则
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+      start_period: 25s
+    restart: unless-stopped

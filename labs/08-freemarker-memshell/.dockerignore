@@ -1,0 +1,7 @@
+target/
+*.class
+.git
+docs/
+*.md
+build-memshell.ps1
+probe-name-test.ps1
