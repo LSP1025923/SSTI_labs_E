@@ -25,6 +25,7 @@ build 04-tornado-chain      ssti-tornado-chain
 build 05-jinja-sandbox      ssti-jinja-sandbox
 build 06-blind-ssti         ssti-blind
 build 07-flask-memshell     ssti-flask-memshell
+build 09-bottle-chain       ssti-bottle-chain
 
 if [[ "$WITH_JAVA" == "1" ]]; then
   echo ""

@@ -27,6 +27,7 @@ Build-Lab '04-tornado-chain'     'ssti-tornado-chain'
 Build-Lab '05-jinja-sandbox'     'ssti-jinja-sandbox'
 Build-Lab '06-blind-ssti'        'ssti-blind'
 Build-Lab '07-flask-memshell'    'ssti-flask-memshell'
+Build-Lab '09-bottle-chain'      'ssti-bottle-chain'
 
 if ($WithJava) {
     Write-Host ""

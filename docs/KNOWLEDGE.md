@@ -42,7 +42,7 @@ render_template_string("Hello {{ name }}", name=user_input)   # ✅ 用户输入
 
 | 探测载荷 | 若被求值，说明是 | 本仓库验证情况 |
 |----------|------------------|----------------|
-| `{{7*7}}` → `49` | Jinja2 / Twig / Nunjucks / Tornado / Django(需过滤) | ✅ lab 02 / 04 |
+| `{{7*7}}` → `49` | Jinja2 / Twig / Nunjucks / Tornado / Bottle / Django(需过滤) | ✅ lab 02 / 04 / 09 |
 | `{{7*'7'}}` → `7777777` | **Jinja2**（Python 的 `str*int`） | 未验证 |
 | `{{7*'7'}}` → `49` | **Twig**（PHP 里 `'7'` 转数字） | 未验证（非本仓库引擎） |
 | `${7*7}` → `49` | Mako / FreeMarker / JSP EL / Thymeleaf | ✅ lab 03（Mako）；其余未验证 |
@@ -50,8 +50,8 @@ render_template_string("Hello {{ name }}", name=user_input)   # ✅ 用户输入
 | `${{7*7}}` → `49` | Handlebars 系（外层 `{{}}` 先被剥掉） | 未验证 |
 | `#{7*7}` / `*{7*7}` | Ruby / Thymeleaf / SpringEL | 未验证 |
 | `{% ... %}` 能执行 | Jinja2 / Tornado / Twig / Nunjucks | ✅ lab 02 / 04 |
-| `% for i in ...` 行语法 | Mako / Bottle / Tornado(部分) | ✅ lab 03（Mako） |
-| `<% ... %>` 代码块 | Mako / ERB / ASP | ✅ lab 03（Mako） |
+| `% for i in ...` 行语法 | Mako / Bottle / Tornado(部分) | ✅ lab 03（Mako）/ lab 09（Bottle，行语法与 `<% %>` 均实测） |
+| `<% ... %>` 代码块 | Mako / Bottle(SimpleTemplate) / ERB / ASP | ✅ lab 03（Mako）/ lab 09（Bottle，`%>` 后必须换行） |
 | `${...?new()}` / `${...?upper_case}` | FreeMarker（内置函数用 `?`） | 本仓库 lab 08 源码里是 FreeMarker，但未在本机跑通构建 |
 | `@Model.` / `T(...)` | Thymeleaf / SpringEL | 未验证（lab 08 第二条路径） |
 

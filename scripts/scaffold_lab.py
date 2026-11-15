@@ -100,6 +100,16 @@ LABS: dict[str, LabSpec] = {
         title="Tornado 13 关 WAF 链",
         requirements=["Flask>=3.0,<4.0", "Jinja2>=3.1.4", "tornado>=6.4"],
     ),
+    "09-bottle-chain": LabSpec(
+        dirname="09-bottle-chain",
+        lab_id="bottle-chain",
+        image="ssti-bottle-chain",
+        port=8099,
+        port_env="BOTTLE_CHAIN_PORT",
+        static_flag="flag{bottle_chain}",
+        title="Bottle SimpleTemplate 13 关 WAF 链",
+        requirements=["Flask>=3.0,<4.0", "Jinja2>=3.1.4", "bottle>=0.13,<0.14"],
+    ),
     "05-jinja-sandbox": LabSpec(
         dirname="05-jinja-sandbox",
         lab_id="jinja-sandbox",

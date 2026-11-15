@@ -200,7 +200,8 @@ def L11() -> Level:
             ignore_case=False,
             note="禁止 `' \" + . [ ]` 与子串 `request`。",
         ),
-        hint="`chr` + `str.join` 可以替代引号和加号；`getattr` 替代点号。",
+        hint="Mako 的 `${}` 里 Python 内置函数直接可用：`__import__` 没有被禁，"
+        "`getattr` 替代点号，`str(bytes((…)), 编码)` 可以无引号/无加号地造出任意字符串。",
     )
 
 
@@ -219,8 +220,9 @@ def L12() -> Level:
             chars=("_", ".", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "\\", "'", '"', "[", "]"),
             note="禁止 `_ . 0-9 \\ ' \" [ ]`。",
         ),
-        hint="Mako 是编译成 Python 的，所以 `%` 行控制与代码块仍然可用；"
-        "重点仍然是「没有引号和数字怎么造字符串和整数」。",
+        hint="Mako 是编译成 Python 的，`%` 行控制与代码块仍然可用；"
+        "本关 `+` 并没有被禁，`True` 参与算术能凑出整数，`chr()` 就回来了。"
+        "另一条路：`open` 是内置函数，`from os import sep` 能无下划线地拿到 `/`。",
     )
 
 
@@ -241,8 +243,10 @@ def L13() -> Level:
             ignore_case=False,
             note="禁止 `_ . \\ ' \" + [ ]` 与子串 `request/class/init/arg/config/app/self`。",
         ),
-        hint="刻意设计的硬关：上帝模式里先看 `template_after_waf` 与异常类型，"
-        "再决定是继续压载荷还是换语法面。",
+        hint="本关封了 `getattr`（含 `attr`）与 `+`，但 `<% %>` 代码块里的 "
+        "`from x import y` 语句没有被禁，数字也仍然可用；"
+        "`str(bytes((…)), 编码)` 造串不需要任何运算符。"
+        "先用上帝模式确认过滤行为再压载荷。",
     )
 
 

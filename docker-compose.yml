@@ -211,3 +211,20 @@ services:
       retries: 30
       start_period: 40s
     restart: unless-stopped
+
+  # ---------------------------------------------------------------- 09
+  # Bottle SimpleTemplate 13 关链（编译型引擎 + Jinja 式花括号）
+  bottle-chain:
+    build:
+      <<: *py-build
+      dockerfile: labs/09-bottle-chain/Dockerfile
+    image: ssti-bottle-chain:local
+    container_name: ssti-09-bottle-chain
+    ports:
+      - "${BOTTLE_CHAIN_PORT:-8099}:5000"
+    environment:
+      <<: *flag-env
+      LAB_ID: bottle-chain
+      STATIC_FLAG: ${STATIC_FLAG_BOTTLE_CHAIN:-flag{bottle_chain}}
+    healthcheck: *py-healthcheck
+    restart: unless-stopped

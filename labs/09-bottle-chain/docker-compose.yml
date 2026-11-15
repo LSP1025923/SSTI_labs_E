@@ -1,0 +1,29 @@
+# 单靶场独立环境：在本目录直接 `docker compose up --build` 即可（端口 8099）。
+#
+# 注意：build context 是仓库根目录，因为镜像需要 shared/ 公共库与统一前端产物。
+# 首次启动前请先构建前端镜像：
+#     ../../scripts/build-frontend.sh          # Linux/macOS
+#     ..\..\scripts\build-frontend.ps1         # Windows
+services:
+  bottle-chain:
+    build:
+      context: ../..
+      dockerfile: labs/09-bottle-chain/Dockerfile
+      args:
+        FRONTEND_IMAGE: ${FRONTEND_IMAGE:-ssti-frontend:local}
+    image: ssti-bottle-chain:local
+    container_name: ssti-bottle-chain
+    ports:
+      - "${BOTTLE_CHAIN_PORT:-8099}:5000"
+    environment:
+      LAB_ID: bottle-chain
+      PORT: "5000"
+      SSTI_NO_EGRESS: "0"
+      # flag 优先级 GZCTF_FLAG > DASFLAG > FLAG > STATIC_FLAG
+      GZCTF_FLAG: ${GZCTF_FLAG:-}
+      DASFLAG: ${DASFLAG:-}
+      FLAG: ${FLAG:-}
+      STATIC_FLAG: ${STATIC_FLAG:-flag{bottle_chain}}
+      RESET_TOKEN: ${RESET_TOKEN:-}
+      SSTI_MAX_OUTPUT_CHARS: ${SSTI_MAX_OUTPUT_CHARS:-262144}
+    restart: unless-stopped

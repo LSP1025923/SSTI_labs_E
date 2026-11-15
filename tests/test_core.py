@@ -5,7 +5,7 @@
 
     PYTHONPATH=shared python tests/test_core.py
 
-覆盖：关卡注册完整性、三引擎基础渲染、WAF 命中/绕过语义、盲关语义、
+覆盖：关卡注册完整性、四引擎基础渲染、WAF 命中/绕过语义、盲关语义、
 flag 读写与「输出中出现 flag」判定。
 """
 
@@ -61,14 +61,14 @@ def main() -> int:
     flagutil.write_flag_file()
 
     print("[1] 关卡注册")
-    for engine in ("jinja", "mako", "tornado"):
+    for engine in ("jinja", "mako", "tornado", "bottle"):
         lv = levels_for(engine)
         check(f"{engine} 有 13 关", len(lv) == 13, f"实际 {len(lv)}")
         ids = [x.level_id for x in lv]
         check(f"{engine} 关卡 id 唯一且为 0..12", ids == [str(i) for i in range(13)], str(ids))
         check(f"{engine} 每关都有标题/描述", all(x.title and x.description for x in lv))
         check(f"{engine} 第 3 关是盲关", lv[2].blind is True)
-    check("engine_titles 覆盖基础三引擎", {"jinja", "mako", "tornado"} <= set(engine_titles()))
+    check("engine_titles 覆盖基础四引擎", {"jinja", "mako", "tornado", "bottle"} <= set(engine_titles()))
 
     print("[1b] 沙箱关卡库（05-jinja-sandbox）")
     sbx = levels_for("jinja-sandbox")
@@ -100,6 +100,7 @@ def main() -> int:
             ("jinja", "{{ config }}", None),
             ("mako", "${7*7}", "49"),
             ("tornado", "{{ 7*7 }}", "49"),
+            ("bottle", "{{7*7}}", "49"),
         ]
         for engine, tpl, expect in cases:
             level = levels_for(engine)[0]
@@ -138,7 +139,7 @@ def main() -> int:
         check("盲关记录异常类型", rb_bad.exception_type is not None)
 
         print("[5] 未过滤关卡不应报异常")
-        for engine in ("jinja", "mako", "tornado"):
+        for engine in ("jinja", "mako", "tornado", "bottle"):
             lv = levels_for(engine)[0]
             res = lv.render("hello")
             check(f"{engine} L1 `hello` 无异常", res.error is None, str(res.error))
