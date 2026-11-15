@@ -28,15 +28,15 @@
 | [`06-blind-ssti`](labs/06-blind-ssti/README.md) | 8096 | Jinja2 | 4 | 否 | 无回显 SSTI：布尔盲注 → 时间盲注 → 写文件侧信道 → 不出网过渡（指向 07） |
 | [`07-flask-memshell`](labs/07-flask-memshell/README.md) | 8097 | Jinja2 → Flask | 5（攻击链台阶） | **是** | 不出网：写文件侧信道 → 绕过 `setupmethod` 把 webshell 注进运行中的 Flask |
 | [`08-freemarker-memshell`](labs/08-freemarker-memshell/README.md) | 8098 | FreeMarker / Thymeleaf → Tomcat | 4 | **是** | 不出网：Java 侧同构目标，`?new()` + `UNRESTRICTED` 类解析器 → Tomcat Filter 内存马 |
+| [`09-bottle-chain`](labs/09-bottle-chain/README.md) | 8099 | Bottle `SimpleTemplate` | 13 | 否 | 第 4 条同构 13 关链：编译成 Python + Jinja 式花括号，`{{` 被拦后代码块里还有 `_stdout` 可用 |
 
 说明：
 
 - **lab 08 通过 compose profile 单独启用**（首次构建要拉 Maven 依赖，较慢）：
   `docker compose --profile java up -d`，或 `scripts/up-all.sh --with-java`。
-- **lab 05 / 06 目前只有脚手架**（`Dockerfile` / `docker-compose.yml` / `entrypoint.sh`），
-  还没有 `app.py`，因此**起不来**。公共库里的渲染器（`jinja_sandbox`）与
-  `echo_mode`（`bool` / `none` / `file`）已经为它们准备好；
-  关卡定义需要新增 `shared/ssti_core/levels/<engine>.py`，见下文「怎么加一个新靶场」。
+- **lab 02 / 03 / 04 / 09 是同构的 13 关链**：同一套难度曲线在四个引擎上各走一遍，
+  便于对照「同一条规则在不同语法面下怎么绕」。可解性矩阵（51/52）见
+  [`docs/SOLVABILITY.md`](docs/SOLVABILITY.md)。
 - lab 01 / 07 是**场景型靶场**：`/` 是业务页面，统一控制台挂在 `/console/`；
   其余靶场的 `/` 就是控制台。见 [`docs/API.md`](docs/API.md) §5。
 
@@ -46,18 +46,18 @@
 
 | 知识点 | 在教什么 | 覆盖靶场 / 关卡 |
 |--------|----------|-----------------|
-| **注入识别** | `{{7*7}}` → `49` 确认模板被求值 | 02 id0、03 id0、04 id0、01、07 step0 |
+| **注入识别** | `{{7*7}}` → `49` 确认模板被求值 | 02 id0、03 id0、04 id0、09 id0、01、07 step0 |
 | **引擎指纹** | `${7*7}` → Mako；`<%= %>` → ERB；`${{ }}` → Handlebars 系；Jinja/Twig 用状态码 49 vs 7777777 区分 | 01–04 各自的 L1；见 [`docs/KNOWLEDGE.md`](docs/KNOWLEDGE.md) |
-| **语法面绕过（定界符）** | `{{` 被拦 → `{% print(...) %}`（Jinja/Tornado）、`<% %>` + `context.write`（Mako） | 02 id1、03 id1、04 id1、07 step1 |
-| **黑名单绕过 · 字符串构造** | `~` / 相邻字面量隐式拼接 / `chr()` / `[::-1]` 反转，绕开 `__`、`flag`、`cat`、`popen` 等词 | 01 全关、02 id7–id12、03 id4–id12、04 id4–id7 |
-| **黑名单绕过 · 字符集** | 禁引号 → `chr()`；禁下划线 → 不用魔术属性；禁点号 → `getattr` / `|attr` / `[]`；禁数字 → `True`/`len()` | 02 id3–id8、03 id3–id8、04 id3–id8 |
+| **语法面绕过（定界符）** | `{{` 被拦 → `{% print(...) %}`（Jinja）、`_stdout`/`_printlist` 代码块（Bottle）、`<% %>` + `context.write`（Mako） | 02 id1、03 id1、09 id1、07 step1（04 id1 已改为拦 `open`，见 SOLVABILITY.md §2.1） |
+| **黑名单绕过 · 字符串构造** | `~` / 相邻字面量隐式拼接 / `chr()` / `str(bytes((…)),编码)` / `dict(kw=…)` 键名白嫖，绕开 `__`、`flag`、`cat`、`popen` 等词 | 01 全关、02 id7–id11、03 id4–id12、04 id4–id12、09 id4–id12 |
+| **黑名单绕过 · 字符集** | 禁引号 → `chr()`；禁下划线 → 不用魔术属性；禁点号 → `getattr` / `|attr` / `[]`；禁数字 → `True`/`len()` | 02 id3–id8、03 id3–id8、04 id3–id8、09 id3–id8 |
 | **魔术属性访问** | `|attr('_'~'_'~'class'~'_'~'_')`、`foo['__globals__']`、`getattr(obj, name)` | 02 id5–id7、04 id6 |
-| **对象图 → 危险模块** | `lipsum.__globals__`、`cycler.__init__.__globals__.__builtins__`、`sys.modules['os']`、`__import__` | 01、02 id0–id7、04 id7 |
+| **对象图 → 危险模块** | `lipsum.__globals__`、`cycler.__init__.__globals__.__builtins__`、`sys.modules['os']`、`__import__` | 01、02 id0–id7、04 id7、09 id7 |
 | **前缀污染 / 变量置空** | 载荷前被拼 `{% set config=None %}`、`% if False:` —— 换入口，而不是硬绕 | 02 id9、03 id9、04 id9 |
-| **盲注（布尔信道）** | 只回 `correct` / `wrong`：把「读数据」变成「控制成功与否」 | 02 id2、03 id2、04 id2、07 step2（连成败都不回） |
+| **盲注（布尔信道）** | 只回 `correct` / `wrong`：把「读数据」变成「控制成功与否」 | 02 id2、03 id2、04 id2、09 id2、07 step2（连成败都不回） |
 | **盲注（时间 / 副作用）** | `echo_mode="none"`：唯一信号是副作用 | 07 step2/3/4 |
 | **无回显文件回显** | 命令输出写进 Web 可访问目录，再用 HTTP 取回 | 07 step3（`/echo/`，`cat</flag>/app/echo/x`） |
-| **沙箱逃逸** | `SandboxedEnvironment` / `ImmutableSandboxedEnvironment` 的属性白名单怎么绕 | 05（关卡待补，渲染器已就绪） |
+| **沙箱逃逸** | `SandboxedEnvironment` / `ImmutableSandboxedEnvironment` 的属性白名单怎么绕 | 05 |
 | **不出网内存马** | 反弹 shell / DNSLog / 外连下载全部失效时，把能力挂到**已有的入站 HTTP 通道** | 07 step4（Flask 路由型 + Filter 型）、08（Tomcat Filter 型） |
 
 更细的原理、payload 与「哪条规则为什么必被绕过」见
@@ -92,7 +92,7 @@ docker build -t ssti-frontend:local frontend
 ### 1) 一键起全部（推荐）
 
 ```bash
-scripts/up-all.sh                   # 01–07（Windows: scripts\up-all.ps1）
+scripts/up-all.sh                   # 01–07、09（Windows: scripts\up-all.ps1）
 scripts/up-all.sh --with-java       # 额外起 08（Java，首次构建慢）
 ```
 
@@ -102,7 +102,7 @@ scripts/up-all.sh --with-java       # 额外起 08（Java，首次构建慢）
 ### 2) 或者直接用根 compose
 
 ```bash
-docker compose up -d                # 01–07
+docker compose up -d                # 01–07、09
 docker compose up -d jinja-chain    # 只起某一个服务
 docker compose --profile java up -d # 额外起 08
 docker compose down
@@ -123,13 +123,15 @@ docker compose up --build           # → http://127.0.0.1:8092
 | 02 | <http://127.0.0.1:8092> |
 | 03 | <http://127.0.0.1:8093> |
 | 04 | <http://127.0.0.1:8094> |
-| 05 / 06 | 8095 / 8096（**待实现**） |
+| 05 | <http://127.0.0.1:8095> |
+| 06 | <http://127.0.0.1:8096> |
 | 07 | <http://127.0.0.1:8097> |
 | 08 | <http://127.0.0.1:8098>（`--profile java`） |
+| 09 | <http://127.0.0.1:8099> |
 
 端口都可用环境变量覆盖：`JINJA_WAF_PORT` / `JINJA_CHAIN_PORT` / `MAKO_CHAIN_PORT` /
 `TORNADO_CHAIN_PORT` / `JINJA_SANDBOX_PORT` / `BLIND_SSTI_PORT` /
-`FLASK_MEMSHELL_PORT` / `FREEMARKER_MEMSHELL_PORT`。
+`FLASK_MEMSHELL_PORT` / `FREEMARKER_MEMSHELL_PORT` / `BOTTLE_CHAIN_PORT`。
 
 ### 验证
 
@@ -157,7 +159,7 @@ user-repo/
 │   ├── waf.py                 #   WafSpec：声明式过滤规则（子串/字符/正则/前后缀）
 │   ├── render.py              #   RenderResult + plain_text_output（统一转义出口）
 │   ├── engines/               #   渲染器：jinja / jinja_plain / jinja_sandbox / mako / tornado / bottle
-│   ├── levels/                #   关卡定义：jinja.py / mako.py / tornado.py（各 13 关）
+│   ├── levels/                #   关卡定义：jinja.py / mako.py / tornado.py / bottle.py（各 13 关）+ sandbox.py
 │   ├── labapp.py              #   create_lab_app()：契约里的 /api/*、/docs/*、降级控制台
 │   ├── labmeta.py             #   LabMeta + Theme：靶场元信息与配色
 │   ├── flagutil.py            #   flag 解析/写入/命中判定
@@ -283,7 +285,7 @@ user-repo/
 `GZCTF_FLAG > DASFLAG > FLAG > STATIC_FLAG` 的顺序解析。
 
 ```bash
-# 构建机上：产出镜像（01–07；--with-java 额外构建 08）
+# 构建机上：产出镜像（01–07、09；--with-java 额外构建 08）
 scripts/build-all.sh --with-java
 # 然后 push 到你的 registry
 
@@ -317,15 +319,16 @@ docker compose -f docker-compose.prod.yml --profile java up -d   # 含 08
 | 1 | `labs/08-freemarker-memshell/docker-compose.yml` | 单靶场 compose 默认端口曾是旧的 `8088`（`MEM_LAB_PORT`），与根 compose 的 **8098** 不一致 | ✅ 已统一为 `${FREEMARKER_MEMSHELL_PORT:-8098}`，镜像名也改为 `ssti-freemarker-memshell:local` |
 | 2 | `labs/02-jinja-chain/README.md` | README 声称大量 ✅ payload 由 `verify_labs.py` 断言，但该脚本只覆盖 6 条 | ✅ `verify_labs.py` 对 02 已扩到 **23 条探针**，覆盖 id 0–8、10 的成功与拦截 |
 | 3 | `labs/05-jinja-sandbox/`、`labs/06-blind-ssti/` | 只有脚手架没有 `app.py` | ✅ 两个靶场均已实现并验证（4 关 + 4 关） |
+| 4 | `shared/ssti_core/engines/__init__.py` | `bottle` 渲染器已登记但没有任何关卡使用 | ✅ 新增 **lab 09-bottle-chain**：13 关同构 WAF 链，`bottle` 引擎正式启用（端口 8099） |
+| 5 | 02/03/04 链式靶场有 9 关没有已证明的解 | 上一轮审计记为「未找到解」 | ✅ 本轮审计 **8 关找到真实解**（`min(dict(kw))` 取键名 + `str(bytes(…),'utf8')` 造串两条通用通道；02 id 11 用 `request.args` 传参），**04 id 1 属设计缺陷已直接修复**（拦 `{{` → 拦 `open`）。当前矩阵 **51/52**，仅 02 id 12 保留为作者挑战关，见 [`docs/SOLVABILITY.md`](docs/SOLVABILITY.md) |
 
 ### 仍然存在
 
 | # | 位置 | 问题 |
 |---|------|------|
-| 4 | `shared/ssti_core/engines/__init__.py` | `bottle` 渲染器已登记但**没有任何关卡使用**，其 pip 包也不在任何 `requirements.txt` 里 —— 属于预留引擎，要么补关卡，要么删掉 |
-| 5 | **链式靶场有 9 关没有已证明的解** | `02` id 11/12、`03` id 10/11/12、`04` id 1/10/11/12。其中 **`04` id 1 属于设计缺陷**（Tornado 只有 `{{ }}` 一种输出构造，拦掉它就等于没有回显通道），其余是刻意的高压过滤。完整矩阵、成因与三种处理方案见 [`docs/SOLVABILITY.md`](docs/SOLVABILITY.md) |
 | 6 | 出网切断的 DNS 部分**平台相关** | 在 Docker Desktop(WSL2) 上，Docker 内嵌解析器（`127.0.0.11`）的 DNS **不经过容器 netfilter**（实测 iptables 规则计数为 0，解析照常成功）。该平台上「不出网」只等于「TCP 出不去」；原生 Linux 上两条 DNS 规则才会命中，请在目标平台自行复验。见 [`docs/MEMSHELL.md`](docs/MEMSHELL.md) 2.1.1 |
 | 7 | `labs/08-freemarker-memshell` 的 Thymeleaf 入口 | **不是 RCE**（Thymeleaf 3.0.15 与 3.0.11 均实测模板名不求值）。作为刻意保留的**对照案例**，题面与 README 都已如实标注；想让它真能打通，需要让某个模板把用户输入拼进 Thymeleaf **表达式源码**（而非模板名） |
+| 8 | `02-jinja-chain` id 12（L13 扩展关键字） | 全仓库唯一保留的**无已知解**关卡：`attr` 在子串表内 ⇒ Jinja 全部属性访问原语写不出来，加上点号/方括号被禁，已知 gadget 链全部依赖至少一次属性访问。题面已如实标注；教学场次需要人人可过时按 [`docs/SOLVABILITY.md`](docs/SOLVABILITY.md) §2.5 放宽一条约束即可 |
 
 > 可解性的**实测矩阵**是这套仓库里最该看的一张表：
 > [`docs/SOLVABILITY.md`](docs/SOLVABILITY.md)。它由 `tests/audit_solvability.py`
