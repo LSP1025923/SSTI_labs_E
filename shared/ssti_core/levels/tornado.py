@@ -40,19 +40,22 @@ def L02() -> Level:
     return Level(
         level_id="1",
         engine=ENGINE,
-        title="L2 - 拦截 {{",
-        summary="双花括号被整段替换为 WAF",
+        title="L2 - 拦截 open",
+        summary="子串 open 被整段替换为 WAF",
         description=(
-            "只要出现 `{{` 整段就被替换成 `WAF`。\n"
-            "⚠️ **本关目前没有回显通道**：Tornado 模板只有 `{{ ... }}` 一种输出构造，"
-            "`{% ... %}` 语句块会执行但**不产生任何输出**。所以这一关在当前规则下"
-            "拿不到 `/flag`，是设计上的缺陷而非难度问题 —— 详见 "
-            "`docs/SOLVABILITY.md` 第 2.1 节（含三种改法）。\n"
-            "如果你是出题人，请按那份文档改掉本关的过滤目标再发布；"
-            "如果你是选手，跳过本关即可，不要在这里空耗。"
+            "载荷中不能出现子串 `open`：`open('/flag')` 写不了，"
+            "连 `os.popen(...)` 也一起被拦（`popen` 含 `open`）。\n"
+            "但 Tornado 的 `{% import %}` 语句、`__import__` 与 `subprocess.getoutput` "
+            "都不含被禁子串 —— 第一关那条「`open` 直读」的路被封了，"
+            "换一条 gadget 就能绕过。"
         ),
-        waf=WafSpec(substrings=("{{",), ignore_case=False, note="出现 `{{` 即整段替换为 `WAF`。"),
-        hint="（本关无解，见题面说明与 docs/SOLVABILITY.md。）",
+        waf=WafSpec(
+            substrings=("open",),
+            ignore_case=False,
+            note="命中子串 `open` 即整段替换为 `WAF`（`os.popen` 含 `open`，一并被拦）。",
+        ),
+        hint="`open` 与 `popen` 都写不了；`{% import subprocess %}` 与 "
+        "`__import__('subprocess').getoutput(...)` 都不含被禁子串。",
     )
 
 
@@ -196,7 +199,8 @@ def L11() -> Level:
             ignore_case=False,
             note="禁止 `' \" + . [ ]` 与子串 `request`。",
         ),
-        hint="`str.join` 替代加号、`getattr` 替代点号；取值通道要绕开 `request` 这个名字。",
+        hint="Tornado 模板里 Python 内置函数（`getattr` / `min` / `str` / `bytes`…）直接可用；"
+        "`getattr` 替代点号，`dict(关键字=值)` 的键名就是现成的字符串。",
     )
 
 
@@ -212,7 +216,8 @@ def L12() -> Level:
             chars=("_", ".", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "\\", "'", '"', "[", "]"),
             note="禁止 `_ . 0-9 \\ ' \" [ ]`。",
         ),
-        hint="Tornado 的 `{% import %}` 语句本身不含被禁字符，是很好的起点。",
+        hint="Tornado 的 `{% import %}` 语句本身不含被禁字符，是很好的起点；"
+        "本关没有禁 `+`，也没有禁 `True` / `getattr`。",
     )
 
 
@@ -233,7 +238,8 @@ def L13() -> Level:
             ignore_case=False,
             note="禁止 `_ . \\ ' \" + [ ]` 与子串 `request/class/init/arg/config/app/self`。",
         ),
-        hint="刻意设计的硬关：先用上帝模式观察 `template_after_waf`，再逐项压缩。",
+        hint="本关封了符号与关键字，但 `{% from x import y %}` 语句与 `bytes` / `str` / "
+        "`eval` 这些内置名都没在表里；数字也仍然可用。先用上帝模式确认过滤行为再压载荷。",
     )
 
 
