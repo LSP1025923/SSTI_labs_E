@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from ssti_core.level import Level
-from ssti_core.levels import jinja, mako, sandbox, tornado
+from ssti_core.levels import bottle, jinja, mako, sandbox, tornado
 
 #: 注册键 -> 关卡列表。
 #:
@@ -22,6 +22,7 @@ _BY_ENGINE: dict[str, list[Level]] = {
     jinja.ENGINE: jinja.ALL,
     mako.ENGINE: mako.ALL,
     tornado.ENGINE: tornado.ALL,
+    bottle.ENGINE: bottle.ALL,
     sandbox.REGISTRY_KEY: sandbox.ALL,
 }
 
@@ -30,6 +31,7 @@ ENGINE_TITLES: dict[str, str] = {
     jinja.ENGINE: jinja.ENGINE_TITLE,
     mako.ENGINE: mako.ENGINE_TITLE,
     tornado.ENGINE: tornado.ENGINE_TITLE,
+    bottle.ENGINE: bottle.ENGINE_TITLE,
     sandbox.REGISTRY_KEY: sandbox.ENGINE_TITLE,
 }
 

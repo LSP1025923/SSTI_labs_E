@@ -40,6 +40,7 @@ cat <<'EOF'
   8091 01-jinja-waf-fenjing   8092 02-jinja-chain     8093 03-mako-chain
   8094 04-tornado-chain       8095 05-jinja-sandbox   8096 06-blind-ssti
   8097 07-flask-memshell      8098 08-freemarker-memshell（--with-java）
+  8099 09-bottle-chain
 
 健康检查：scripts/verify_labs.py
 EOF

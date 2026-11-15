@@ -26,6 +26,7 @@ LABS = [
     "05-jinja-sandbox",
     "06-blind-ssti",
     "07-flask-memshell",
+    "09-bottle-chain",
 ]
 
 fails = []

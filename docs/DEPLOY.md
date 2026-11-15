@@ -7,7 +7,7 @@
 
 ## 1. 前置：必须先有统一前端镜像
 
-**所有 Python 系靶场（01–07）在构建时都依赖一个已存在的本地镜像 `ssti-frontend:local`。**
+**所有 Python 系靶场（01–07、09）在构建时都依赖一个已存在的本地镜像 `ssti-frontend:local`。**
 
 ### 1.1 为什么
 
@@ -70,7 +70,7 @@ docker build -f labs/02-jinja-chain/Dockerfile \
 ### 2.1 一键脚本（推荐）
 
 ```bash
-scripts/up-all.sh                 # 先确认前端镜像，再 docker compose up -d（01–07）
+scripts/up-all.sh                 # 先确认前端镜像，再 docker compose up -d（01–07、09）
 scripts/up-all.sh --with-java     # 额外起 08（--profile java）
 scripts/up-all.sh --build         # 顺带重新构建镜像
 
@@ -86,7 +86,7 @@ scripts\up-all.ps1 -Rebuild
 ### 2.2 根 compose（一次起全部）
 
 ```bash
-docker compose up -d                       # 01–07
+docker compose up -d                       # 01–07、09
 docker compose up -d jinja-chain           # 只起某个 service
 docker compose --profile java up -d        # 额外起 08（首次构建要拉 Maven 依赖，慢）
 docker compose logs -f mako-chain
